@@ -1,3 +1,4 @@
+import os
 from flask import Flask, request, jsonify, send_file, render_template_string, abort
 import tempfile, shutil, os, glob, threading, uuid, io, re
 from shutil import which
@@ -370,5 +371,9 @@ def fetch(job_id):
 def home():
     return render_template_string(HTML)
 
-if __name__=="__main__":
-    app.run(host="0.0.0.0", port=5000)
+
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
+
