@@ -12,6 +12,18 @@ from yt_dlp import YoutubeDL
 
 app = Flask(__name__)
 
+def download_video(url, filename):
+    ydl_opts = {
+        "cookiefile": "cookies.txt",
+        "format": "bestvideo+bestaudio/best",
+        "merge_output_format": "mp4",
+        "outtmpl": f"{filename}.%(ext)s"
+    }
+
+    with YoutubeDL(ydl_opts) as ydl:
+        ydl.download([url])
+
+
 # ---------- Env detection ----------
 def ffmpeg_path():
     # Prefer system ffmpeg, else common Termux location
