@@ -27,7 +27,10 @@ HTML = r"""
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Hyper Downloader</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 96 96'%3E%3Crect width='96' height='96' rx='16' fill='%23111'/%3E%3Ctext x='50%' y='58%' text-anchor='middle' font-size='44' fill='%23fff' font-family='Arial,Helvetica,sans-serif'%3EHD%3C/text%3E%3C/svg%3E">
+
+<!-- Favicon: gradient square with HD -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 96 96'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' x2='1'%3E%3Cstop offset='0' stop-color='%236d28d9'/%3E%3Cstop offset='1' stop-color='%23111827'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='96' height='96' rx='16' fill='url(%23g)'/%3E%3Ctext x='50%25' y='58%25' text-anchor='middle' font-size='44' fill='%23fff' font-family='Arial,Helvetica,sans-serif' font-weight='700'%3EHD%3C/text%3E%3C/svg%3E">
+
 <style>
   :root{
     --bg:#0b1220; --card:#0f172a; --text:#e6eefc; --muted:#9fb0c8; --border:#263143;
@@ -36,34 +39,78 @@ HTML = r"""
   @media (prefers-color-scheme: light){
     :root{ --bg:#eef2f7; --card:#ffffff; --text:#0f172a; --muted:#475569; --border:#cbd5e1; --primary:#6d28d9; --accent:#06b6d4; --ring:#8b5cf6; }
   }
+
+  /* Base */
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Noto Sans",sans-serif; padding:clamp(12px,2vw,24px)}
-  .wrap{max-width:min(980px,100%);margin-inline:auto}
+  .wrap{max-width:min(1120px,100%);margin-inline:auto}
   .box{background:var(--card);border:1px solid var(--border);border-radius:18px;box-shadow:0 8px 28px rgba(0,0,0,.16);padding:clamp(16px,3vw,28px)}
   h1,h2{margin:0;font-weight:800}
   .lead{margin:6px 0 14px;color:var(--muted);font-size:clamp(13px,1.8vw,15.5px)}
 
-  /* Header */
-  .header{display:flex;align-items:center;gap:12px;margin:0 0 18px;flex-wrap:wrap;justify-content:space-between}
-  .logo{display:grid;place-items:center;width:44px;height:44px;border-radius:12px;background:linear-gradient(135deg,var(--primary),#111827)}
-  .logo span{font-size:18px;color:#fff;font-weight:800;letter-spacing:.5px}
-  .brand{display:flex;align-items:baseline;gap:8px}
-  .brand h1{font-size:clamp(18px,3vw,26px)}
-  .badge{font-size:12px;padding:4px 8px;border:1px solid var(--ring);color:var(--ring);border-radius:999px;background:transparent}
+  /* ====== HEADER (matches your screenshot) ====== */
+  .header{
+    display:flex; align-items:center; gap:14px;
+    margin:0 0 18px;
+  }
+  .logo{
+    width:44px; height:44px; border-radius:12px; flex:0 0 44px;
+    background: linear-gradient(135deg,#6d28d9, #111827 68%);
+    display:grid; place-items:center;
+    box-shadow: inset 0 0 1px rgba(255,255,255,.12), 0 6px 18px rgba(0,0,0,.3);
+  }
+  .logo span{ color:#fff; font-weight:800; letter-spacing:.4px; font-size:18px }
 
-  /* Navigation */
-  .nav{display:flex;gap:10px;margin-left:auto;align-items:center}
-  .nav a{font-size:14px;color:var(--muted);text-decoration:none;padding:8px 10px;border-radius:10px;display:inline-block}
-  .nav a:hover{background:color-mix(in oklab, var(--border) 30%, transparent)}
-  .pill{padding:8px 12px;border-radius:999px;background:linear-gradient(90deg,var(--primary),var(--accent));color:#fff;font-weight:800;display:inline-block}
-  .menu{display:none}
-  .menu summary{list-style:none;cursor:pointer;padding:8px 10px;border:1px solid var(--border);border-radius:10px;color:var(--muted)}
-  .menu[open] summary{background:color-mix(in oklab, var(--border) 30%, transparent)}
-  .menu a{display:block}
+  /* Brand block = title + premium outline pill in one row */
+  .brand{ display:flex; align-items:center; gap:10px; min-width:0 }
+  .brand h1{ font-size:clamp(18px,3.2vw,30px); white-space:nowrap }
+  .tag-prem{
+    padding:6px 12px; border-radius:999px; font-size:14px; font-weight:700;
+    border:1.6px solid #a78bfa; color:#c4b5fd; background:transparent;
+  }
 
+  /* Spacer pushes nav to right */
+  .spacer{ flex:1 1 auto }
+
+  /* Right side nav (desktop and tablet landscape) */
+  .nav-links{ display:flex; align-items:center; gap:18px }
+  .nav-links a{
+    font-size:15px; color:var(--muted); text-decoration:none; padding:6px 4px; border-radius:10px;
+  }
+  .nav-links a:hover{ color:#dbe7ff }
+  .cta{
+    padding:10px 14px; border-radius:14px; font-weight:800; color:#fff; text-decoration:none;
+    background: linear-gradient(90deg,#6d28d9,#22d3ee);
+    box-shadow: 0 6px 18px rgba(0,0,0,.25);
+  }
+
+  /* Mobile/Tablet compact menu */
+  .menu{ display:none }
+  .menu summary{
+    list-style:none; cursor:pointer; padding:10px 14px; border-radius:14px;
+    border:1px solid var(--border); color:var(--muted);
+  }
+  .menu[open] summary{ background:color-mix(in oklab, var(--border) 30%, transparent) }
+  .menu a{ display:block; padding:8px 2px; color:var(--muted); text-decoration:none }
+  .menu a:hover{ color:#dbe7ff }
+
+  /* Breakpoints for mobile, tablet, desktop */
+  @media (max-width: 820px){         /* phones + small tablets portrait */
+    .nav-links{ display:none }
+    .menu{ display:block }
+  }
+  @media (min-width: 821px) and (max-width: 1199px){  /* tablets / small laptops */
+    .brand h1{ font-size:clamp(20px,2.2vw,26px) }
+  }
+  @media (min-width: 1200px){        /* wide desktop */
+    .wrap{ max-width:1200px }
+  }
+
+  /* Form and controls */
   form{display:grid;gap:12px}
   .grid{display:grid;gap:10px;grid-template-columns:1fr}
   @media (min-width:640px){ .grid{grid-template-columns:2fr 1fr 1.2fr auto} }
+  @media (min-width:1024px){ .grid{grid-template-columns:2.2fr 1fr 1.2fr auto} }
 
   label{display:block;margin-bottom:6px;font-size:13px;color:var(--muted)}
   input,select,button{
@@ -94,41 +141,34 @@ HTML = r"""
   @media (max-width:480px){ .thumb{width:104px} }
 
   .footer{display:flex;gap:8px;align-items:center;justify-content:space-between;margin-top:10px}
-
-  /* Responsive tweaks */
-  @media (max-width: 760px){
-    .brand{width:100%;display:flex;align-items:center;justify-content:flex-start}
-    .nav .links{display:none}
-    .menu{display:block}
-    .grid{grid-template-columns:1fr}
-  }
-  @media (min-width: 761px){
-    .menu{display:none}
-    .nav .links{display:flex;gap:10px}
-  }
 </style>
 </head>
 <body>
   <main class="wrap">
     <header class="header">
       <div class="logo"><span>HD</span></div>
+
       <div class="brand">
         <h1>Hyper Downloader</h1>
-        <span class="badge">Premium</span>
+        <span class="tag-prem">Premium</span>
       </div>
-      <nav class="nav" aria-label="Primary">
-        <details class="menu">
-          <summary>Menu</summary>
-          <a href="#features">Features</a>
-          <a href="#faq">FAQ</a>
-          <a class="pill" href="#">Go Premium</a>
-        </details>
-        <div class="links">
-          <a href="#features">Features</a>
-          <a href="#faq">FAQ</a>
-          <a class="pill" href="#">Go Premium</a>
-        </div>
+
+      <div class="spacer"></div>
+
+      <!-- Desktop / tablet landscape -->
+      <nav class="nav-links" aria-label="Primary">
+        <a href="#features">Features</a>
+        <a href="#faq">FAQ</a>
+        <a class="cta" href="#">Go Premium</a>
       </nav>
+
+      <!-- Mobile / small tablet -->
+      <details class="menu">
+        <summary>Menu</summary>
+        <a href="#features">Features</a>
+        <a href="#faq">FAQ</a>
+        <a href="#">Go Premium</a>
+      </details>
     </header>
 
     <section class="box" aria-labelledby="h2">
@@ -346,7 +386,7 @@ def format_map_for_env():
             "mp4_720"  : "best[ext=mp4][height<=720]/best[ext=mp4]",
             "mp4_1080" : "best[ext=mp4][height<=1080]/best[ext=mp4]",
             "mp4_best" : "best[ext=mp4]/best",
-            "audio_mp3": None  # disabled without ffmpeg
+            "audio_mp3": None
         }
 
 def run_download(job, url, fmt_key, filename):
