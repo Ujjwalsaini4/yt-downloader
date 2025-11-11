@@ -1,11 +1,18 @@
-import os from flask import Flask, request, jsonify, send_file, render_template_string, abort import tempfile, shutil, glob, threading, uuid, re, time from shutil import which from yt_dlp import YoutubeDL
+# -*- coding: utf-8 -*-
+import os
+from flask import Flask, request, jsonify, send_file, render_template_string, abort
+import tempfile, shutil, glob, threading, uuid, re, time
+from shutil import which
+from yt_dlp import YoutubeDL
 
-app = Flask(name)
+app = Flask(__name__)
 
-✅ Write cookies from Render Environment Variable → cookies.txt
-
-cookies_data = os.environ.get("COOKIES_TEXT", "").strip() if cookies_data: with open("cookies.txt", "w", encoding="utf-8") as f: f.write(cookies_data)
-
+# Write cookies from environment variable -> cookies.txt
+cookies_data = os.environ.get("COOKIES_TEXT", "").strip()
+if cookies_data:
+    with open("cookies.txt", "w", encoding="utf-8") as f:
+        f.write(cookies_data)
+      
 ---------- FFmpeg Detection ----------
 
 def ffmpeg_path(): return which("ffmpeg") or "/usr/bin/ffmpeg" or "/data/data/com.termux/files/usr/bin/ffmpeg"
