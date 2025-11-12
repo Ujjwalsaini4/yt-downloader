@@ -7,7 +7,7 @@ import glob
 import threading
 import uuid
 import re
-from flask import Flask, request, jsonify, Response, render_template_string, abort, stream_with_context, safe_join, make_response
+from flask import Flask, request, jsonify, Response, render_template_string, abort, stream_with_context
 from shutil import which
 from yt_dlp import YoutubeDL
 
@@ -30,7 +30,7 @@ HTML = r"""
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>💎 Hyper Downloader</title>
+<title>Hyper Downloader</title>
 <style>
 :root{ --bg:#0b0f19; --card:#0f1724; --text:#e6eefc; --muted:#97a6b2; --border:#192230;
   --grad-1:#8b5cf6; --grad-2:#06b6d4; --grad:linear-gradient(90deg,var(--grad-1),var(--grad-2)); }
@@ -84,15 +84,15 @@ button:disabled{opacity:.6;cursor:not-allowed}
         <div class="brand">Hyper <span>Downloader</span></div>
       </div>
       <nav>
-        <a href="#features">💎 Premium</a>
-        <a href="#faq">❓ FAQ</a>
+        <a href="#features">Premium</a>
+        <a href="#faq">FAQ</a>
         <a href="#" class="btn">Go Premium</a>
       </nav>
     </header>
 
     <section class="card">
-      <h2>⬇️ Download from YouTube</h2>
-      <p class="lead">🎬 Paste your video link, choose format, and start downloading.</p>
+      <h2>Download from YouTube</h2>
+      <p class="lead">Paste link, choose format and download.</p>
 
       <div id="preview" class="preview">
         <div class="preview-row">
@@ -116,7 +116,7 @@ button:disabled{opacity:.6;cursor:not-allowed}
         </select>
         <label>Filename (optional)</label>
         <input id="name" placeholder="My video">
-        <button id="goBtn" type="submit">⚡ Start Download</button>
+        <button id="goBtn" type="submit">Start Download</button>
       </form>
 
       <div class="progress"><div id="bar" class="bar"></div><div class="pct" id="pctTxt">0%</div></div>
@@ -124,17 +124,16 @@ button:disabled{opacity:.6;cursor:not-allowed}
     </section>
 
     <section id="features" class="card">
-      <h2>💎 Premium Features</h2>
+      <h2>Premium Features</h2>
       <ul>
-        <li>4K + MP3 download support</li>
-        <li>Progress bar with speed & percent</li>
-        <li>Beautiful gradient UI</li>
-        <li>Fully mobile responsive</li>
+        <li>4K + MP3 support</li>
+        <li>Progress with speed & percent</li>
+        <li>Auto cleanup of old files</li>
       </ul>
     </section>
 
     <section id="faq" class="card">
-      <h2>❓ FAQ</h2>
+      <h2>FAQ</h2>
       <p>If options are disabled, your server may not have FFmpeg installed.</p>
     </section>
   </div>
@@ -146,7 +145,7 @@ const previewBlock=document.getElementById("preview"), thumb=document.getElement
 
 fetch("/env").then(r=>r.json()).then(j=>{
   HAS_FFMPEG=!!j.ffmpeg;
-  if(!HAS_FFMPEG){msg.textContent="⚠️ FFmpeg missing — MP3/merge disabled.";msg.style.color="#f59e0b";}
+  if(!HAS_FFMPEG){msg.textContent="FFmpeg not found - MP3 disabled.";msg.style.color="#f59e0b";}
 });
 
 async function fetchInfo(url){
@@ -170,7 +169,7 @@ document.getElementById("url").addEventListener("input", ()=>{
 
 document.getElementById("frm").addEventListener("submit", async (e)=>{
   e.preventDefault();
-  msg.textContent="⏳ Starting...";
+  msg.textContent="Starting...";
   const url=document.getElementById("url").value.trim();
   const fmt=document.getElementById("format").value;
   const name=document.getElementById("name").value.trim();
@@ -192,8 +191,8 @@ async function poll(){
     bar.style.width=pct+"%";
     pctTxt.textContent=pct+"%";
     speedTxt.textContent=fmtBytes(p.speed_bytes);
-    if(p.status==="finished"){msg.textContent="✅ Done — preparing file...";window.location="/fetch/"+job;job=null;return;}
-    else if(p.status==="error"){msg.textContent="❌ "+(p.error||"Download failed");job=null;return;}
+    if(p.status==="finished"){msg.textContent="Done — preparing file...";window.location="/fetch/"+job;job=null;return;}
+    else if(p.status==="error"){msg.textContent="Error: "+(p.error||"Download failed");job=null;return;}
     setTimeout(poll,700);
   }catch(e){msg.textContent="Network error";job=null;}
 }
@@ -262,7 +261,6 @@ def run_download(job, url, fmt_key, filename):
             "no_warnings": True,
             "noplaylist": True
         }
-        # remove None values
         opts = {k:v for k,v in opts.items() if v is not None}
 
         if HAS_FFMPEG:
@@ -310,25 +308,23 @@ def progress(id):
     if not j: abort(404)
     return jsonify({"percent":j.percent,"status":j.status,"error":j.error,"speed_bytes":j.speed_bytes})
 
-# ---------- Safe streaming fetch (deletes temp AFTER stream completes) ----------
+# Stream-and-cleanup: stream file to client, then remove temp folder
 def stream_file_and_cleanup(path, job_id):
-    """Generator that streams file in chunks, then removes job tmp folder and JOBS entry."""
     try:
         with open(path, "rb") as f:
             while True:
-                chunk = f.read(131072)
-                if not chunk:
+                data = f.read(128 * 1024)
+                if not data:
                     break
-                yield chunk
+                yield data
     finally:
-        # After streaming completes (or on any generator exit), cleanup
         j = JOBS.pop(job_id, None)
-        try:
-            if j:
+        if j:
+            try:
                 shutil.rmtree(getattr(j, "tmp", ""), ignore_errors=True)
                 print(f"[fetch-cleanup] removed job {job_id}")
-        except Exception as e:
-            print(f"[fetch-cleanup] error removing job {job_id}: {e}")
+            except Exception as e:
+                print(f"[fetch-cleanup] failed to remove {job_id}: {e}")
 
 @app.get("/fetch/<id>")
 def fetch(id):
@@ -338,29 +334,24 @@ def fetch(id):
         return jsonify({"error":"File not ready"}), 400
 
     filename = os.path.basename(j.file)
-    # determine content-length if possible
     try:
-        content_length = os.path.getsize(j.file)
+        size = os.path.getsize(j.file)
     except Exception:
-        content_length = None
+        size = None
 
-    headers = {
-        "Content-Disposition": f'attachment; filename="{filename}"'
-    }
-    if content_length:
-        headers["Content-Length"] = str(content_length)
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    if size is not None:
+        headers["Content-Length"] = str(size)
 
-    # stream the file and cleanup after stream finishes
     return Response(stream_with_context(stream_file_and_cleanup(j.file, id)), headers=headers, mimetype="application/octet-stream")
 
-# ---------- env endpoint ----------
 @app.get("/env")
 def env():
     return jsonify({"ffmpeg": HAS_FFMPEG})
 
-# ---------- Background cleanup worker (removes old finished/error jobs) ----------
-CLEANUP_INTERVAL = int(os.environ.get("CLEANUP_INTERVAL_SECONDS", 60 * 10))   # default every 10 minutes
-JOB_TTL_SECONDS   = int(os.environ.get("JOB_TTL_SECONDS", 60 * 60 * 1))      # default keep finished for 1 hour
+# Background cleanup for old finished/error jobs
+CLEANUP_INTERVAL = int(os.environ.get("CLEANUP_INTERVAL_SECONDS", 60 * 10))
+JOB_TTL_SECONDS   = int(os.environ.get("JOB_TTL_SECONDS", 60 * 60 * 1))
 
 def cleanup_worker():
     while True:
@@ -372,11 +363,8 @@ def cleanup_worker():
                 created_at = getattr(job, "created_at", None) or now
                 age = now - created_at
 
-                # finished/error older than TTL -> remove
                 if status in ("finished", "error") and age > JOB_TTL_SECONDS:
                     remove.append(jid)
-
-                # optional: stale queued jobs (very old)
                 if status == "queued" and age > (JOB_TTL_SECONDS * 6):
                     remove.append(jid)
 
@@ -395,10 +383,9 @@ def cleanup_worker():
 _cleanup_thread = threading.Thread(target=cleanup_worker, daemon=True)
 _cleanup_thread.start()
 
-# ---------- Run ----------
 @app.get("/")
 def home():
     return render_template_string(HTML)
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT",5000)))
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
