@@ -24,7 +24,7 @@ def ffmpeg_path():
 HAS_FFMPEG = os.path.exists(ffmpeg_path())
 
 # ---------- Beautiful Modern HTML ----------
-HTML = """
+HTML = r"""
 <!doctype html>
 <html lang="en">
 <head>
@@ -130,7 +130,7 @@ button[disabled]{opacity:.6;cursor:not-allowed;}
   overflow:hidden;position:relative;
 }
 .bar{
-  width:0%;height:100%;
+  width:0%;Height:100%;
   background:var(--accent);
   transition:width .3s ease;
   box-shadow:0 0 20px rgba(6,182,212,.4);
@@ -177,7 +177,7 @@ footer{margin-top:20px;text-align:center;color:var(--muted);font-size:12px;}
 </header>
 
 <main class="card">
-  <h2>📥 Download from YouTube</h2>
+  <h2>⬇️ Download from YouTube</h2>
   <p class="small">Paste your link, select format, and start. Progress and speed show in real-time.</p>
 
   <div id="preview" class="preview">
@@ -207,6 +207,9 @@ footer{margin-top:20px;text-align:center;color:var(--muted);font-size:12px;}
   </form>
 
   <div class="progress"><div id="bar" class="bar"></div><div id="pct" class="pct">0%</div></div>
+  <!-- ETA added under progress bar -->
+  <div id="eta" style="margin-top:8px;" class="small">ETA: --</div>
+
   <p id="msg" style="margin-top:8px;" class="small"></p>
 </main>
 
@@ -216,11 +219,13 @@ footer{margin-top:20px;text-align:center;color:var(--muted);font-size:12px;}
 <script>
 let job=null;
 const bar=document.getElementById("bar"),pct=document.getElementById("pct"),msg=document.getElementById("msg");
+const etaEl=document.getElementById("eta");
 const urlIn=document.getElementById("url"),thumb=document.getElementById("thumb"),preview=document.getElementById("preview"),pTitle=document.getElementById("pTitle"),pSub=document.getElementById("pSub");
 
 document.getElementById("frm").addEventListener("submit",async(e)=>{
   e.preventDefault();
   msg.textContent="⏳ Starting...";
+  etaEl.textContent="ETA: --";
   const url=urlIn.value.trim(),fmt=document.getElementById("format").value,name=document.getElementById("name").value.trim();
   try{
     const r=await fetch("/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url,format_choice:fmt,filename:name})});
@@ -247,6 +252,15 @@ async function fetchInfo(url){
   }catch(e){preview.style.display="none";}
 }
 
+function formatSeconds(s){
+  if(!isFinite(s) || s<0) return "--";
+  s=Math.round(s);
+  const h=Math.floor(s/3600); const m=Math.floor((s%3600)/60); const sec=s%60;
+  if(h>0) return `${h}h ${m}m ${sec}s`;
+  if(m>0) return `${m}m ${sec}s`;
+  return `${sec}s`;
+}
+
 async function poll(){
   if(!job)return;
   try{
@@ -255,6 +269,30 @@ async function poll(){
     const p=await r.json();
     const pctv=Math.max(0,Math.min(100,p.percent||0));
     bar.style.width=pctv+"%";pct.textContent=pctv+"%";
+
+    // ETA calculation using returned downloaded_bytes, total_bytes and speed_bytes
+    let etaText="--";
+    try{
+      const downloaded = p.downloaded_bytes || 0;
+      const total = p.total_bytes || 0;
+      const speed = p.speed_bytes || 0;
+      if(total>0 && downloaded>0 && speed>0 && downloaded < total){
+        const remain = (total - downloaded)/speed;
+        etaText = formatSeconds(remain);
+      } else if(pctv>0 && speed>0){
+        // fallback: estimate total by percent if total not provided
+        // total_est = downloaded_est * 100 / percent -> need downloaded (if not present can't fallback)
+        if(downloaded>0){
+          const total_est = downloaded * 100 / pctv;
+          const remain = (total_est - downloaded)/speed;
+          etaText = formatSeconds(remain);
+        } else {
+          etaText="--";
+        }
+      }
+    }catch(e){etaText="--";}
+    etaEl.textContent = "ETA: " + (etaText==="--" ? "--" : etaText);
+
     if(p.status==="finished"){msg.textContent="✅ Preparing file...";window.location="/fetch/"+job;job=null;return;}
     if(p.status==="error"){msg.textContent="❌ "+p.error;job=null;return;}
     setTimeout(poll,800);
@@ -279,6 +317,9 @@ class Job:
         self.speed_bytes = 0.0
         self.created_at = time.time()
         self.downloaded_at = None
+        # added fields to support ETA calculation
+        self.total_bytes = 0
+        self.downloaded_bytes = 0
         JOBS[self.id] = self
 
 YTDLP_URL_RE = re.compile(r"^https?://", re.I)
@@ -300,10 +341,15 @@ def run_download(job,url,fmt_key,filename):
         fmt=format_map_for_env().get(fmt_key)
         def hook(d):
             if d.get("status")=="downloading":
-                total=d.get("total_bytes")or d.get("total_bytes_estimate")or 1
-                job.percent=int((d.get("downloaded_bytes",0)*100)/total)
-                job.speed_bytes=d.get("speed")or 0
-            elif d.get("status")=="finished":job.percent=100
+                total=d.get("total_bytes")or d.get("total_bytes_estimate")or 0
+                downloaded=d.get("downloaded_bytes",0) or 0
+                # update job fields for frontend ETA
+                job.total_bytes = total
+                job.downloaded_bytes = downloaded
+                job.percent = int((downloaded*100)/total) if total else job.percent
+                job.speed_bytes = d.get("speed")or 0
+            elif d.get("status")=="finished":
+                job.percent=100
         base=(filename.strip() if filename else "%(title)s").rstrip(".")
         out=os.path.join(job.tmp,base+".%(ext)s")
         opts={"format":fmt,"outtmpl":out,"merge_output_format":"mp4","cookiefile":"cookies.txt",
@@ -337,7 +383,9 @@ def info():
 def progress(id):
     j=JOBS.get(id)
     if not j:abort(404)
-    return jsonify({"percent":j.percent,"status":j.status,"error":j.error,"speed_bytes":j.speed_bytes})
+    # include downloaded_bytes and total_bytes to allow frontend ETA calc
+    return jsonify({"percent":j.percent,"status":j.status,"error":j.error,"speed_bytes":j.speed_bytes,
+                    "downloaded_bytes":getattr(j,"downloaded_bytes",0),"total_bytes":getattr(j,"total_bytes",0)})
 
 @app.get("/fetch/<id>")
 def fetch(id):
