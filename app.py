@@ -76,6 +76,13 @@ header{
   color:#fff;font-weight:800;font-size:18px;
   box-shadow:0 8px 24px rgba(6,182,212,.25);
 }
+/* gentle background pulse for subtle shine */
+@keyframes bgPulse {
+  0% { filter: hue-rotate(0deg) saturate(100%); }
+  50% { filter: hue-rotate(8deg) saturate(110%); }
+  100% { filter: hue-rotate(0deg) saturate(100%); }
+}
+.logo { animation: bgPulse 8s ease-in-out infinite; }
 .brand-title span{
   background:var(--accent);
   -webkit-background-clip:text;
@@ -134,6 +141,16 @@ button[disabled]{opacity:.6;cursor:not-allowed;}
   color:#fff;font-weight:700;font-size:13px;
   text-shadow:0 1px 2px rgba(0,0,0,0.5);
 }
+
+/* sheen overlay on progress */
+.bar::after{
+  content:"";
+  position:absolute;inset:0;
+  background:linear-gradient(90deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02), rgba(255,255,255,0.06));
+  transform:translateX(-40%);opacity:0.6;filter:blur(6px);
+  animation: sheen 2.4s linear infinite;
+}
+@keyframes sheen{100%{transform:translateX(120%)}}
 
 /* Preview */
 .preview{
