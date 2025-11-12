@@ -164,6 +164,11 @@ button[disabled]{opacity:.6;cursor:not-allowed;}
 .meta .title{font-weight:700;font-size:15px;}
 .meta .sub{color:var(--muted);font-size:13px;margin-top:4px;}
 
+.meta-row{display:flex;justify-content:space-between;align-items:center;margin-top:10px}
+.small-muted{color:var(--muted);font-size:13px}
+.meta-right{display:flex;gap:12px;align-items:center}
+.meta-item{background:rgba(255,255,255,0.02);padding:6px 10px;border-radius:999px;border:1px solid rgba(255,255,255,0.02);font-weight:700;font-size:13px;color:#e8f0ff}
+
 footer{margin-top:20px;text-align:center;color:var(--muted);font-size:12px;}
 </style>
 </head>
@@ -177,7 +182,7 @@ footer{margin-top:20px;text-align:center;color:var(--muted);font-size:12px;}
 </header>
 
 <main class="card">
-  <h2>📥 Download from YouTube</h2>
+  <h2>⬇️ Download from YouTube</h2>
   <p class="small">Paste your link, select format, and start. Progress and speed show in real-time.</p>
 
   <div id="preview" class="preview">
@@ -207,7 +212,16 @@ footer{margin-top:20px;text-align:center;color:var(--muted);font-size:12px;}
   </form>
 
   <div class="progress"><div id="bar" class="bar"></div><div id="pct" class="pct">0%</div></div>
-  <p id="msg" style="margin-top:8px;" class="small"></p>
+
+  <!-- ADDED: speed (Mbps) and ETA -->
+  <div class="meta-row">
+    <div id="msg" class="small-muted"></div>
+    <div class="meta-right">
+      <div id="speedLabel" class="meta-item">0.00 Mbps</div>
+      <div id="etaLabel" class="meta-item">ETA: 00:00</div>
+    </div>
+  </div>
+
 </main>
 
 <footer>© 2025 Hyper Downloader — Auto cleanup & responsive UI</footer>
@@ -217,6 +231,7 @@ footer{margin-top:20px;text-align:center;color:var(--muted);font-size:12px;}
 let job=null;
 const bar=document.getElementById("bar"),pct=document.getElementById("pct"),msg=document.getElementById("msg");
 const urlIn=document.getElementById("url"),thumb=document.getElementById("thumb"),preview=document.getElementById("preview"),pTitle=document.getElementById("pTitle"),pSub=document.getElementById("pSub");
+const speedLabel = document.getElementById("speedLabel"), etaLabel = document.getElementById("etaLabel");
 
 document.getElementById("frm").addEventListener("submit",async(e)=>{
   e.preventDefault();
@@ -247,6 +262,22 @@ async function fetchInfo(url){
   }catch(e){preview.style.display="none";}
 }
 
+// helpers for Mbps and ETA
+function mbpsFromBytesPerSec(bps){
+  if(!bps || bps <= 0) return 0.0;
+  return (bps * 8) / 1_000_000;  // megabits per second (decimal)
+}
+function fmtMbps(n){
+  return n === 0 ? '0.00 Mbps' : n.toFixed(2) + ' Mbps';
+}
+function fmtTimeSecs(s){
+  if(!isFinite(s) || s <= 0) return '00:00';
+  const sec = Math.round(s);
+  const m = Math.floor(sec / 60);
+  const ss = sec % 60;
+  return String(m).padStart(2,'0') + ':' + String(ss).padStart(2,'0');
+}
+
 async function poll(){
   if(!job)return;
   try{
@@ -255,6 +286,30 @@ async function poll(){
     const p=await r.json();
     const pctv=Math.max(0,Math.min(100,p.percent||0));
     bar.style.width=pctv+"%";pct.textContent=pctv+"%";
+
+    // update speed label (using speed_bytes from backend)
+    const mbps = mbpsFromBytesPerSec(p.speed_bytes || 0);
+    speedLabel.textContent = fmtMbps(mbps);
+
+    // calculate ETA if possible (total_bytes & downloaded_bytes & speed_bytes)
+    let etaText = '00:00';
+    if(p.total_bytes && p.downloaded_bytes && p.speed_bytes && p.speed_bytes > 0 && p.total_bytes > p.downloaded_bytes){
+      const remaining = (p.total_bytes - p.downloaded_bytes);
+      const secs = remaining / p.speed_bytes;
+      etaText = fmtTimeSecs(secs);
+    } else {
+      // fallback: if percent and downloaded_bytes present and speed known
+      if(p.percent && p.percent > 0 && p.downloaded_bytes && p.speed_bytes && p.speed_bytes > 0){
+        const assumedTotal = (p.downloaded_bytes * 100) / p.percent;
+        if(assumedTotal > p.downloaded_bytes){
+          const remaining = assumedTotal - p.downloaded_bytes;
+          const secs = remaining / p.speed_bytes;
+          if(isFinite(secs) && secs > 0) etaText = fmtTimeSecs(secs);
+        }
+      }
+    }
+    etaLabel.textContent = 'ETA: ' + etaText;
+
     if(p.status==="finished"){msg.textContent="✅ Preparing file...";window.location="/fetch/"+job;job=null;return;}
     if(p.status==="error"){msg.textContent="❌ "+p.error;job=null;return;}
     setTimeout(poll,800);
@@ -277,6 +332,9 @@ class Job:
         self.file = None
         self.error = None
         self.speed_bytes = 0.0
+        # ADDED: track downloaded & total bytes for ETA
+        self.downloaded_bytes = 0
+        self.total_bytes = 0
         self.created_at = time.time()
         self.downloaded_at = None
         JOBS[self.id] = self
@@ -300,10 +358,15 @@ def run_download(job,url,fmt_key,filename):
         fmt=format_map_for_env().get(fmt_key)
         def hook(d):
             if d.get("status")=="downloading":
-                total=d.get("total_bytes")or d.get("total_bytes_estimate")or 1
-                job.percent=int((d.get("downloaded_bytes",0)*100)/total)
-                job.speed_bytes=d.get("speed")or 0
-            elif d.get("status")=="finished":job.percent=100
+                total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
+                downloaded = d.get("downloaded_bytes", 0)
+                # store bytes for ETA
+                job.total_bytes = int(total or 0)
+                job.downloaded_bytes = int(downloaded or 0)
+                job.percent = int((downloaded * 100)/total) if total else job.percent
+                job.speed_bytes = d.get("speed") or 0
+            elif d.get("status")=="finished":
+                job.percent=100
         base=(filename.strip() if filename else "%(title)s").rstrip(".")
         out=os.path.join(job.tmp,base+".%(ext)s")
         opts={"format":fmt,"outtmpl":out,"merge_output_format":"mp4","cookiefile":"cookies.txt",
@@ -337,7 +400,15 @@ def info():
 def progress(id):
     j=JOBS.get(id)
     if not j:abort(404)
-    return jsonify({"percent":j.percent,"status":j.status,"error":j.error,"speed_bytes":j.speed_bytes})
+    # RETURN speed, downloaded_bytes and total_bytes for frontend ETA calculation
+    return jsonify({
+        "percent":j.percent,
+        "status":j.status,
+        "error":j.error,
+        "speed_bytes": j.speed_bytes,
+        "downloaded_bytes": getattr(j, "downloaded_bytes", 0),
+        "total_bytes": getattr(j, "total_bytes", 0)
+    })
 
 @app.get("/fetch/<id>")
 def fetch(id):
