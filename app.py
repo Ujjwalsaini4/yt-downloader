@@ -23,7 +23,7 @@ def ffmpeg_path():
     return which("ffmpeg") or "/usr/bin/ffmpeg"
 HAS_FFMPEG = os.path.exists(ffmpeg_path())
 
-# ---------- Beautiful Modern HTML ----------
+# ---------- Beautiful Modern HTML (added speed & ETA UI) ----------
 HTML = r"""
 <!doctype html>
 <html lang="en">
@@ -164,6 +164,11 @@ button[disabled]{opacity:.6;cursor:not-allowed;}
 .meta .title{font-weight:700;font-size:15px;}
 .meta .sub{color:var(--muted);font-size:13px;margin-top:4px;}
 
+.meta-row{display:flex;justify-content:space-between;align-items:center;margin-top:10px}
+.small-muted{color:var(--muted);font-size:13px}
+.meta-right{display:flex;gap:12px;align-items:center}
+.meta-item{background:rgba(255,255,255,0.02);padding:6px 10px;border-radius:999px;border:1px solid rgba(255,255,255,0.02);font-weight:700;font-size:13px;color:#e8f0ff}
+
 footer{margin-top:20px;text-align:center;color:var(--muted);font-size:12px;}
 </style>
 </head>
@@ -207,7 +212,16 @@ footer{margin-top:20px;text-align:center;color:var(--muted);font-size:12px;}
   </form>
 
   <div class="progress"><div id="bar" class="bar"></div><div id="pct" class="pct">0%</div></div>
-  <p id="msg" style="margin-top:8px;" class="small"></p>
+
+  <!-- ADDED: speed (one decimal) and ETA -->
+  <div class="meta-row">
+    <div id="msg" class="small-muted"></div>
+    <div class="meta-right">
+      <div id="speedLabel" class="meta-item">0.0 Mbps</div>
+      <div id="etaLabel" class="meta-item">ETA: 00:00</div>
+    </div>
+  </div>
+
 </main>
 
 <footer>© 2025 Hyper Downloader — Auto cleanup & responsive UI</footer>
@@ -217,17 +231,19 @@ footer{margin-top:20px;text-align:center;color:var(--muted);font-size:12px;}
 let job=null;
 const bar=document.getElementById("bar"),pct=document.getElementById("pct"),msg=document.getElementById("msg");
 const urlIn=document.getElementById("url"),thumb=document.getElementById("thumb"),preview=document.getElementById("preview"),pTitle=document.getElementById("pTitle"),pSub=document.getElementById("pSub");
+const speedLabel = document.getElementById("speedLabel"), etaLabel = document.getElementById("etaLabel");
 
 document.getElementById("frm").addEventListener("submit",async(e)=>{
   e.preventDefault();
   msg.textContent="⏳ Starting...";
+  document.getElementById("goBtn").disabled = true;
   const url=urlIn.value.trim(),fmt=document.getElementById("format").value,name=document.getElementById("name").value.trim();
   try{
     const r=await fetch("/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url,format_choice:fmt,filename:name})});
     const j=await r.json();
     if(!r.ok)throw new Error(j.error||"Failed to start");
-    job=j.job_id;poll();
-  }catch(err){msg.textContent="❌ "+err.message;}
+    job=j.job_id;msg.textContent="Downloading...";poll();
+  }catch(err){msg.textContent="❌ "+err.message;document.getElementById("goBtn").disabled = false;}
 });
 
 urlIn.addEventListener("input",()=>{
@@ -247,25 +263,65 @@ async function fetchInfo(url){
   }catch(e){preview.style.display="none";}
 }
 
+// helper functions
+function mbpsFromBytesPerSec(bps){
+  if(!bps || bps <= 0) return 0.0;
+  return (bps * 8) / 1_000_000;  // megabits per second
+}
+// show one decimal place only (e.g. 60.4 Mbps, 6.1 Mbps, 0.0 Mbps)
+function fmtMbps(n){
+  if(!n || n === 0) return '0.0 Mbps';
+  return n.toFixed(1) + ' Mbps';
+}
+function fmtTimeSecs(s){
+  if(!isFinite(s) || s <= 0) return '00:00';
+  const sec = Math.round(s);
+  const m = Math.floor(sec / 60);
+  const ss = sec % 60;
+  return String(m).padStart(2,'0') + ':' + String(ss).padStart(2,'0');
+}
+
 async function poll(){
   if(!job)return;
   try{
     const r=await fetch("/progress/"+job);
-    if(r.status===404){msg.textContent="Job expired.";job=null;return;}
+    if(r.status===404){msg.textContent="Job expired.";document.getElementById("goBtn").disabled = false;job=null;return;}
     const p=await r.json();
     const pctv=Math.max(0,Math.min(100,p.percent||0));
     bar.style.width=pctv+"%";pct.textContent=pctv+"%";
-    if(p.status==="finished"){msg.textContent="✅ Preparing file...";window.location="/fetch/"+job;job=null;return;}
-    if(p.status==="error"){msg.textContent="❌ "+p.error;job=null;return;}
+
+    // update speed label (speed_bytes provided by backend)
+    const mbps = mbpsFromBytesPerSec(p.speed_bytes || 0);
+    speedLabel.textContent = fmtMbps(mbps);
+
+    // calculate ETA using total_bytes, downloaded_bytes, speed_bytes
+    let etaText = '00:00';
+    if(p.total_bytes && p.downloaded_bytes && p.speed_bytes && p.speed_bytes > 0 && p.total_bytes > p.downloaded_bytes){
+      const remaining = (p.total_bytes - p.downloaded_bytes);
+      const secs = remaining / p.speed_bytes;
+      etaText = fmtTimeSecs(secs);
+    } else if (p.percent && p.percent > 0 && p.downloaded_bytes && p.speed_bytes && p.speed_bytes > 0) {
+      // fallback: estimate total from percent
+      const assumedTotal = (p.downloaded_bytes * 100) / p.percent;
+      if(assumedTotal > p.downloaded_bytes){
+        const remaining = assumedTotal - p.downloaded_bytes;
+        const secs = remaining / p.speed_bytes;
+        if(isFinite(secs) && secs > 0) etaText = fmtTimeSecs(secs);
+      }
+    }
+    etaLabel.textContent = 'ETA: ' + etaText;
+
+    if(p.status==="finished"){msg.textContent="✅ Preparing file...";setTimeout(()=>window.location="/fetch/"+job,600);job=null;document.getElementById("goBtn").disabled = false;return;}
+    if(p.status==="error"){msg.textContent="❌ "+p.error;document.getElementById("goBtn").disabled = false;job=null;return;}
     setTimeout(poll,800);
-  }catch(e){msg.textContent="Network error.";job=null;}
+  }catch(e){msg.textContent="Network error.";document.getElementById("goBtn").disabled = false;job=null;}
 }
 </script>
 </body>
 </html>
 """
 
-# ---------- Backend (same as before, auto cleanup enabled) ----------
+# ---------- Backend (track bytes + speed for ETA) ----------
 JOBS = {}
 
 class Job:
@@ -277,6 +333,8 @@ class Job:
         self.file = None
         self.error = None
         self.speed_bytes = 0.0
+        self.downloaded_bytes = 0
+        self.total_bytes = 0
         self.created_at = time.time()
         self.downloaded_at = None
         JOBS[self.id] = self
@@ -296,48 +354,88 @@ def format_map_for_env():
 
 def run_download(job,url,fmt_key,filename):
     try:
-        if not YTDLP_URL_RE.match(url):job.status="error";job.error="Invalid URL";return
+        if not YTDLP_URL_RE.match(url):
+            job.status="error";job.error="Invalid URL";return
         fmt=format_map_for_env().get(fmt_key)
+        if fmt is None:
+            job.status="error";job.error="Format not available";return
+
         def hook(d):
-            if d.get("status")=="downloading":
-                total=d.get("total_bytes")or d.get("total_bytes_estimate")or 1
-                job.percent=int((d.get("downloaded_bytes",0)*100)/total)
-                job.speed_bytes=d.get("speed")or 0
-            elif d.get("status")=="finished":job.percent=100
+            try:
+                if d.get("status")=="downloading":
+                    total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
+                    downloaded = d.get("downloaded_bytes", 0)
+                    job.total_bytes = int(total or 0)
+                    job.downloaded_bytes = int(downloaded or 0)
+                    if total:
+                        job.percent = int((downloaded * 100) / total)
+                    job.speed_bytes = d.get("speed") or 0
+                elif d.get("status")=="finished":
+                    job.percent = 100
+            except Exception:
+                pass
+
         base=(filename.strip() if filename else "%(title)s").rstrip(".")
         out=os.path.join(job.tmp,base+".%(ext)s")
-        opts={"format":fmt,"outtmpl":out,"merge_output_format":"mp4","cookiefile":"cookies.txt",
-              "progress_hooks":[hook],"quiet":True,"no_warnings":True,"noplaylist":True}
+        opts={
+            "format":fmt,
+            "outtmpl":out,
+            "merge_output_format":"mp4",
+            "cookiefile":"cookies.txt" if os.path.exists("cookies.txt") else None,
+            "progress_hooks":[hook],
+            "quiet":True,
+            "no_warnings":True,
+            "noplaylist":True
+        }
+        opts = {k:v for k,v in opts.items() if v is not None}
         if HAS_FFMPEG:
             opts["ffmpeg_location"]=ffmpeg_path()
             if fmt_key=="audio_mp3":
                 opts["postprocessors"]=[{"key":"FFmpegExtractAudio","preferredcodec":"mp3"}]
-        with YoutubeDL(opts)as y:y.extract_info(url,download=True)
-        files=glob.glob(job.tmp+"/*");job.file=max(files,key=os.path.getsize);job.status="finished"
+
+        with YoutubeDL(opts) as y:
+            y.extract_info(url,download=True)
+
+        files=glob.glob(job.tmp+"/*")
+        job.file = max(files, key=os.path.getsize) if files else None
+        job.status="finished"
     except Exception as e:
-        job.status="error";job.error=str(e)[:200]
+        job.status="error";job.error=str(e)[:300]
 
 @app.post("/start")
 def start():
-    d=request.json;job=Job()
-    threading.Thread(target=run_download,args=(job,d["url"],d["format_choice"],d.get("filename")),daemon=True).start()
+    d=request.json or {}
+    job=Job()
+    threading.Thread(target=run_download,args=(job,d.get("url",""),d.get("format_choice","mp4_best"),d.get("filename")),daemon=True).start()
     return jsonify({"job_id":job.id})
 
 @app.post("/info")
 def info():
-    d=request.json;url=d.get("url")
+    d=request.json or {}
+    url=d.get("url","")
     try:
-        with YoutubeDL({"skip_download":True,"quiet":True,"noplaylist":True,"cookiefile":"cookies.txt"}) as y:
+        with YoutubeDL({"skip_download":True,"quiet":True,"noplaylist":True,"cookiefile":"cookies.txt" if os.path.exists("cookies.txt") else None}) as y:
             info=y.extract_info(url,download=False)
-        title=info.get("title","");channel=info.get("uploader")or info.get("channel","");thumb=info.get("thumbnail");dur=info.get("duration")or 0
+        title=info.get("title","")
+        channel=info.get("uploader") or info.get("channel","")
+        thumb=info.get("thumbnail")
+        dur=info.get("duration") or 0
         return jsonify({"title":title,"thumbnail":thumb,"channel":channel,"duration_str":f"{dur//60}:{dur%60:02d}"})
-    except:return jsonify({"error":"Preview failed"}),400
+    except Exception:
+        return jsonify({"error":"Preview failed"}),400
 
 @app.get("/progress/<id>")
 def progress(id):
     j=JOBS.get(id)
     if not j:abort(404)
-    return jsonify({"percent":j.percent,"status":j.status,"error":j.error,"speed_bytes":j.speed_bytes})
+    return jsonify({
+        "percent": j.percent,
+        "status": j.status,
+        "error": j.error,
+        "speed_bytes": j.speed_bytes,
+        "downloaded_bytes": getattr(j,"downloaded_bytes",0),
+        "total_bytes": getattr(j,"total_bytes",0)
+    })
 
 @app.get("/fetch/<id>")
 def fetch(id):
@@ -345,11 +443,18 @@ def fetch(id):
     if not j:abort(404)
     if not j.file or not os.path.exists(j.file):return jsonify({"error":"File not ready"}),400
     j.downloaded_at=time.time();j.status="downloaded"
-    return send_file(j.file,as_attachment=True,download_name=os.path.basename(j.file))
+    try:
+        return send_file(j.file,as_attachment=True,download_name=os.path.basename(j.file))
+    except Exception as e:
+        return jsonify({"error":"Failed to send file","detail":str(e)}),500
 
-CLEANUP_INTERVAL=60*10
-JOB_TTL_SECONDS=60*60
-DOWNLOAD_KEEP_SECONDS=60
+@app.get("/env")
+def env(): return jsonify({"ffmpeg":HAS_FFMPEG})
+
+# Cleanup settings
+CLEANUP_INTERVAL = int(os.environ.get("CLEANUP_INTERVAL_SECONDS", 60 * 10))
+JOB_TTL_SECONDS   = int(os.environ.get("JOB_TTL_SECONDS", 60 * 60))
+DOWNLOAD_KEEP_SECONDS = int(os.environ.get("DOWNLOAD_KEEP_SECONDS", 60))
 
 def cleanup_worker():
     while True:
@@ -357,17 +462,22 @@ def cleanup_worker():
             now=time.time()
             remove=[]
             for jid,job in list(JOBS.items()):
-                if job.status in("finished","error") and now-job.created_at>JOB_TTL_SECONDS:remove.append(jid)
-                if job.status=="downloaded" and job.downloaded_at and now-job.downloaded_at>DOWNLOAD_KEEP_SECONDS:remove.append(jid)
+                if job.status in("finished","error") and now-job.created_at>JOB_TTL_SECONDS: remove.append(jid)
+                if job.status=="downloaded" and job.downloaded_at and now-job.downloaded_at>DOWNLOAD_KEEP_SECONDS: remove.append(jid)
             for rid in remove:
                 j=JOBS.pop(rid,None)
-                if j:shutil.rmtree(j.tmp,ignore_errors=True)
-        except Exception as e:print("[cleanup]",e)
+                if j:
+                    try:
+                        shutil.rmtree(j.tmp,ignore_errors=True)
+                    except Exception:
+                        pass
+        except Exception as e:
+            print("[cleanup]",e)
         time.sleep(CLEANUP_INTERVAL)
 threading.Thread(target=cleanup_worker,daemon=True).start()
 
 @app.get("/")
-def home():return render_template_string(HTML)
+def home(): return render_template_string(HTML)
 
 if __name__=="__main__":
     app.run(host="0.0.0.0",port=int(os.environ.get("PORT",5000)))
