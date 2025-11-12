@@ -147,7 +147,7 @@ button:disabled{opacity:.6;cursor:not-allowed}
     </header>
 
     <section class="card">
-      <h2>⬇️ Download from YouTube</h2>
+      <h2>📥 Download from YouTube</h2>
       <p class="lead">🎬 Paste your video link, choose format, and start downloading.</p>
 
       <div id="preview" class="preview">
