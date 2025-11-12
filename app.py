@@ -23,186 +23,360 @@ def ffmpeg_path():
     return which("ffmpeg") or "/usr/bin/ffmpeg"
 HAS_FFMPEG = os.path.exists(ffmpeg_path())
 
-# ---------- HTML UI ----------
+# ---------- BEAUTIFIED HTML UI ----------
 HTML = r"""
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>💎 Hyper Downloader</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Hyper Downloader — Clean & Fast</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <style>
-:root{ --bg:#0b0f19; --card:#0f1724; --text:#e6eefc; --muted:#97a6b2; --border:#192230;
-  --grad-1:#8b5cf6; --grad-2:#06b6d4; --grad:linear-gradient(90deg,var(--grad-1),var(--grad-2)); }
-*{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Noto Sans",sans-serif}
-.wrap{max-width:920px;margin:auto;padding:14px}
-.card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:16px;box-shadow:0 8px 30px rgba(0,0,0,.28);margin-top:16px}
-.header{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:14px}
-.logo{display:flex;align-items:center;gap:10px}
-.logo-icon{width:44px;height:44px;border-radius:12px;background:var(--grad);display:grid;place-items:center;font-weight:800;color:#fff;font-size:18px}
-.brand{font-size:20px;font-weight:800;display:flex;align-items:center;gap:8px}
-.brand span{background:var(--grad);-webkit-background-clip:text;color:transparent}
-nav{display:flex;align-items:center;gap:10px}
-nav a{color:var(--muted);text-decoration:none;font-weight:600;padding:6px 8px;border-radius:10px}
-nav a.btn{background:var(--grad);color:#fff;padding:8px 14px;box-shadow:0 8px 24px rgba(107,60,246,.18);font-weight:800}
-.lead{color:var(--muted);margin-top:6px;margin-bottom:8px;font-size:14px}
-form{display:grid;gap:12px;margin-top:10px}
-label{display:block;color:var(--muted);font-size:13px;margin-bottom:6px}
-input,select,button{width:100%;padding:12px 12px;border-radius:10px;border:1px solid var(--border);background:#081223;color:var(--text);font-size:15px}
-input::placeholder{color:#546171}
-button{background:var(--grad);color:#fff;border:none;font-weight:800;cursor:pointer;padding:12px;border-radius:10px;transition:transform .08s}
-button:active{transform:scale(.99)}
-button:disabled{opacity:.6;cursor:not-allowed}
-.progress{position:relative;width:100%;height:14px;background:#0b1623;border-radius:999px;overflow:hidden;margin-top:10px;border:1px solid rgba(255,255,255,0.02)}
-.bar{position:absolute;left:0;top:0;bottom:0;width:0%;background:var(--grad);transition:width .24s ease;z-index:1}
-.pct{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);display:inline-grid;place-items:center;font-weight:800;color:#fff;font-size:13px;z-index:3;pointer-events:none;white-space:nowrap;text-shadow:0 1px 0 rgba(0,0,0,0.6)}
-.footer{display:flex;justify-content:space-between;align-items:center;margin-top:10px;color:var(--muted);font-size:13px}
-.preview{display:none;margin-top:12px;background:#07101a;padding:10px;border-radius:10px;border:1px solid var(--border)}
-.preview-row{display:flex;gap:12px;align-items:center}
-.thumb{width:100px;aspect-ratio:16/9;border-radius:8px;object-fit:cover;background:#0a0a0a}
-.meta .title{font-weight:800;font-size:14px;margin-bottom:4px}
-.meta .sub{color:var(--muted);font-size:13px}
-@media (max-width:640px){
-  .wrap{padding:12px}
-  .card{padding:12px}
-  .logo-icon{width:38px;height:38px;font-size:15px}
-  .brand{font-size:18px}
-  h2{font-size:19px}
-  input,select,button{padding:10px;font-size:14px}
-  .progress{height:10px}
-  .pct{font-size:12px}
-  .footer{font-size:12px}
-}
+  /* ---------- Typography & root ---------- */
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700;800&display=swap');
+  :root{
+    --bg:#071229;
+    --card:#081427;
+    --muted:#9fb0c8;
+    --glass: rgba(255,255,255,0.04);
+    --accent-1: #7c3aed; /* purple */
+    --accent-2: #06b6d4; /* teal */
+    --accent-grad: linear-gradient(90deg, var(--accent-1), var(--accent-2));
+    --soft-shadow: 0 10px 30px rgba(2,6,23,0.6), inset 0 1px 0 rgba(255,255,255,0.02);
+    --card-radius: 16px;
+    --glass-border: rgba(255,255,255,0.03);
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0;background: radial-gradient(1200px 600px at 10% 10%, rgba(124,58,237,0.08), transparent), radial-gradient(1000px 500px at 90% 90%, rgba(6,182,212,0.06), transparent), var(--bg); color:#e6eefc; font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,"Helvetica Neue",Arial; -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale; }
+  .wrap{max-width:1040px;margin:36px auto;padding:18px}
+
+  /* ---------- Header ---------- */
+  header.site{
+    display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:18px;
+    padding:10px 14px;border-radius:12px;background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01)); border:1px solid var(--glass-border);
+    box-shadow:var(--soft-shadow);
+    backdrop-filter: blur(6px) saturate(120%);
+  }
+  .brand{display:flex;align-items:center;gap:12px}
+  .logo{
+    width:52px;height:52px;border-radius:12px;background:var(--accent-grad);display:grid;place-items:center;font-weight:800;color:white;font-size:18px;box-shadow:0 8px 28px rgba(124,58,237,0.16);
+    transform:translateY(0);transition:transform .28s cubic-bezier(.2,.9,.2,1);
+  }
+  .brand h1{margin:0;font-size:18px;letter-spacing:-0.2px}
+  .brand h1 span{background:var(--accent-grad); -webkit-background-clip:text; color:transparent; font-weight:800}
+  .controls{display:flex;gap:8px;align-items:center}
+  .pill{padding:8px 12px;border-radius:999px;background:transparent;border:1px solid rgba(255,255,255,0.03);color:var(--muted);font-weight:600;font-size:13px}
+  .cta{padding:10px 14px;border-radius:12px;background:var(--accent-grad);box-shadow:0 12px 30px rgba(6,182,212,0.08);font-weight:800;border:none;color:#fff;cursor:pointer;transition:transform .12s}
+  .cta:hover{transform:translateY(-3px);box-shadow:0 18px 40px rgba(6,182,212,0.12)}
+
+  /* ---------- Layout ---------- */
+  .grid{
+    display:grid;
+    grid-template-columns: 1fr 400px;
+    gap:18px;
+    align-items:start;
+  }
+  @media (max-width:980px){ .grid{grid-template-columns:1fr} }
+
+  /* ---------- Main card ---------- */
+  .card{
+    background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+    border:1px solid var(--glass-border);
+    border-radius:var(--card-radius);
+    padding:18px;
+    box-shadow:var(--soft-shadow);
+    transition:transform .18s ease, box-shadow .18s ease;
+  }
+  .card:hover{transform:translateY(-4px);box-shadow:0 18px 60px rgba(2,6,23,0.7)}
+
+  label{display:block;color:var(--muted);font-size:13px;margin-bottom:8px;font-weight:600}
+
+  .input, select, button{
+    width:100%;
+    padding:14px 12px;
+    border-radius:12px;
+    border:1px solid rgba(255,255,255,0.03);
+    background: linear-gradient(180deg, rgba(255,255,255,0.01), rgba(255,255,255,0.00));
+    color:var(--text);
+    font-size:15px;
+    outline:none;
+    transition:box-shadow .12s,transform .08s;
+  }
+  .input::placeholder{color:rgba(159,176,200,0.5)}
+
+  .row{display:flex;gap:12px}
+  .row .col{flex:1}
+
+  .btn-primary{
+    display:inline-grid;place-items:center;
+    padding:12px 16px;border-radius:12px;border:none;background:var(--accent-grad);color:white;font-weight:800;cursor:pointer;
+    box-shadow:0 10px 30px rgba(124,58,237,0.12);
+    transform:translateZ(0);
+  }
+  .btn-primary:active{transform:translateY(1px) scale(.997)}
+
+  .muted{color:var(--muted);font-size:13px}
+
+  /* ---------- Preview card ---------- */
+  .preview{
+    display:flex;gap:12px;align-items:center;padding:10px;border-radius:12px;border:1px solid rgba(255,255,255,0.02);background:linear-gradient(180deg, rgba(255,255,255,0.006), transparent);
+    min-height:88px;overflow:hidden;
+  }
+  .thumb{
+    width:140px;height:80px;border-radius:10px;flex:0 0 140px;object-fit:cover;background:linear-gradient(90deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+    box-shadow:0 8px 20px rgba(2,6,23,0.6);
+  }
+  .meta .title{font-weight:800;font-size:15px;margin-bottom:6px}
+  .meta .sub{color:var(--muted);font-size:13px}
+
+  /* shimmer skeleton for preview while loading */
+  .skeleton{position:relative;overflow:hidden;background:linear-gradient(90deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));}
+  .skeleton::after{
+    content:"";position:absolute;inset:0;background:linear-gradient(90deg, rgba(255,255,255,0.00) 0%, rgba(255,255,255,0.02) 50%, rgba(255,255,255,0.00) 100%);
+    transform:translateX(-100%);animation: shimmer 1.6s linear infinite;
+  }
+  @keyframes shimmer{100%{transform:translateX(100%)}}
+
+  /* ---------- Progress bar ---------- */
+  .progress-wrap{margin-top:14px}
+  .progress{
+    height:18px;border-radius:999px;background:linear-gradient(180deg, rgba(255,255,255,0.01), rgba(255,255,255,0.005));border:1px solid rgba(255,255,255,0.02);overflow:hidden;position:relative
+  }
+  .progress .bar{
+    height:100%;width:0%;background:linear-gradient(90deg, rgba(124,58,237,0.95), rgba(6,182,212,0.95));
+    transition:width .28s cubic-bezier(.2,.9,.2,1), box-shadow .18s;
+    box-shadow:0 8px 30px rgba(124,58,237,0.12);
+    transform-origin:left center;
+  }
+  .progress .pct{
+    position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-weight:800;font-size:13px;color:white;text-shadow:0 1px 0 rgba(0,0,0,0.5)
+  }
+
+  .meta-row{display:flex;justify-content:space-between;align-items:center;margin-top:10px}
+  .speed{font-weight:700;font-size:13px;color:var(--muted)}
+
+  /* small helper */
+  .small{font-size:13px;color:var(--muted)}
+
+  /* ---------- Footer card ---------- */
+  .side{
+    display:flex;flex-direction:column;gap:12px;
+  }
+  .card.alt{padding:12px;display:flex;flex-direction:column;gap:12px;align-items:stretch;min-height:180px}
+  .feature{display:flex;gap:10px;align-items:center}
+  .feature .dot{width:12px;height:12px;border-radius:4px;background:var(--accent-1);box-shadow:0 6px 18px rgba(124,58,237,0.14)}
+
+  /* small animation for success */
+  .flash {
+    position:relative;
+    animation: pop .42s cubic-bezier(.2,.9,.2,1) both;
+  }
+  @keyframes pop{0%{transform:scale(.96);opacity:.0}100%{transform:scale(1);opacity:1}}
+
 </style>
 </head>
 <body>
   <div class="wrap">
-    <header class="header">
-      <div class="logo">
-        <div class="logo-icon">HD</div>
-        <div class="brand">Hyper <span>Downloader</span></div>
-      </div>
-      <nav>
-        <a href="#features">💎 Premium</a>
-        <a href="#faq">❓ FAQ</a>
-        <a href="#" class="btn">Go Premium</a>
-      </nav>
-    </header>
-
-    <section class="card">
-      <h2>⬇️ Download from YouTube</h2>
-      <p class="lead">🎬 Paste your video link, choose format, and start downloading.</p>
-
-      <div id="preview" class="preview">
-        <div class="preview-row">
-          <img id="thumb" class="thumb" alt="">
-          <div class="meta">
-            <div id="pTitle" class="title"></div>
-            <div id="pSub" class="sub"></div>
-          </div>
+    <header class="site">
+      <div class="brand">
+        <div class="logo">HD</div>
+        <div>
+          <h1>Hyper <span>Downloader</span></h1>
+          <div class="small muted">Fast — Clean — Responsive</div>
         </div>
       </div>
 
-      <form id="frm">
-        <label>Video URL</label>
-        <input id="url" placeholder="https://youtube.com/watch?v=..." required>
-        <label>Format</label>
-        <select id="format">
-          <option value="mp4_720" data-need-ffmpeg="1">720p MP4</option>
-          <option value="mp4_1080" data-need-ffmpeg="1">1080p MP4</option>
-          <option value="mp4_best">4K MP4</option>
-          <option value="audio_mp3" data-need-ffmpeg="1">MP3 Only</option>
-        </select>
-        <label>Filename (optional)</label>
-        <input id="name" placeholder="My video">
-        <button id="goBtn" type="submit">⚡ Start Download</button>
-      </form>
+      <div class="controls">
+        <div class="pill small">Server: Live</div>
+        <button class="cta">Go Premium</button>
+      </div>
+    </header>
 
-      <div class="progress"><div id="bar" class="bar"></div><div class="pct" id="pctTxt">0%</div></div>
-      <div class="footer"><span id="msg"></span><span id="speedTxt">0 MB/s</span></div>
-    </section>
+    <div class="grid">
+      <main class="card" aria-labelledby="mainTitle">
+        <h2 id="mainTitle">⬇️ Download from YouTube</h2>
+        <p class="small muted">Paste a video link, choose format & filename, and click start. Progress shows percent & speed.</p>
 
-    <section id="features" class="card">
-      <h2>💎 Premium Features</h2>
-      <ul>
-        <li>4K + MP3 download support</li>
-        <li>Progress bar with speed & percent</li>
-        <li>Beautiful gradient UI</li>
-        <li>Fully mobile responsive</li>
-      </ul>
-    </section>
+        <div id="previewArea" style="margin-top:12px">
+          <div id="preview" class="preview" aria-live="polite" style="display:none">
+            <img id="thumb" class="thumb" alt="">
+            <div class="meta">
+              <div id="pTitle" class="title">Title</div>
+              <div id="pSub" class="sub">Channel • Duration</div>
+            </div>
+          </div>
 
-    <section id="faq" class="card">
-      <h2>❓ FAQ</h2>
-      <p>If options are disabled, your server may not have FFmpeg installed.</p>
-    </section>
+          <div id="previewSkeleton" class="preview skeleton" style="display:none">
+            <div style="width:140px;height:80px;border-radius:8px"></div>
+            <div style="flex:1">
+              <div style="height:16px;width:70%;border-radius:6px;margin-bottom:8px"></div>
+              <div style="height:14px;width:40%;border-radius:6px"></div>
+            </div>
+          </div>
+        </div>
+
+        <form id="frm" style="margin-top:14px">
+          <label>Video URL</label>
+          <input id="url" class="input" placeholder="https://youtube.com/watch?v=..." required>
+
+          <div class="row" style="margin-top:10px">
+            <div class="col">
+              <label>Format</label>
+              <select id="format" class="input">
+                <option value="mp4_720" data-need-ffmpeg="1">720p MP4</option>
+                <option value="mp4_1080" data-need-ffmpeg="1">1080p MP4</option>
+                <option value="mp4_best">4K MP4</option>
+                <option value="audio_mp3" data-need-ffmpeg="1">MP3 Only</option>
+              </select>
+            </div>
+            <div class="col" style="flex:0.8">
+              <label>Filename (optional)</label>
+              <input id="name" class="input" placeholder="My video">
+            </div>
+            <div style="width:120px;align-self:end">
+              <button id="goBtn" class="btn-primary" type="submit">⚡ Download</button>
+            </div>
+          </div>
+
+          <div class="progress-wrap">
+            <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100">
+              <div id="bar" class="bar" style="width:0%"></div>
+              <div id="pct" class="pct">0%</div>
+            </div>
+            <div class="meta-row">
+              <div id="msg" class="small muted"></div>
+              <div id="speed" class="speed">0 MB/s</div>
+            </div>
+          </div>
+        </form>
+      </main>
+
+      <aside class="side">
+        <div class="card alt">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div>
+              <div style="font-weight:800">Premium Features</div>
+              <div class="small muted">Upgrade for faster queues & larger files</div>
+            </div>
+            <div style="font-size:28px">💎</div>
+          </div>
+
+          <div style="margin-top:12px;display:flex;flex-direction:column;gap:10px">
+            <div class="feature"><div class="dot"></div><div class="small muted">4K & MP3 support</div></div>
+            <div class="feature"><div class="dot" style="background:#06b6d4"></div><div class="small muted">Progress & speed</div></div>
+            <div class="feature"><div class="dot"></div><div class="small muted">Auto-cleanup</div></div>
+          </div>
+        </div>
+
+        <div class="card alt">
+          <div style="font-weight:800;margin-bottom:8px">Quick Tips</div>
+          <div class="small muted">• If a format is disabled, install FFmpeg on the server.</div>
+          <div class="small muted">• Use the preview to confirm correct video before download.</div>
+        </div>
+      </aside>
+    </div>
   </div>
 
 <script>
-let job=null, HAS_FFMPEG=false;
-const bar=document.getElementById("bar"), pctTxt=document.getElementById("pctTxt"), msg=document.getElementById("msg"), speedTxt=document.getElementById("speedTxt");
-const previewBlock=document.getElementById("preview"), thumb=document.getElementById("thumb"), pTitle=document.getElementById("pTitle"), pSub=document.getElementById("pSub");
+/* ---------- Client JS: keep your existing behavior but with nicer UI updates ---------- */
+let job = null, HAS_FFMPEG = false;
+const urlIn = document.getElementById("url"), nameIn = document.getElementById("name"), formatSel = document.getElementById("format");
+const bar = document.getElementById("bar"), pct = document.getElementById("pct"), msg = document.getElementById("msg"), speed = document.getElementById("speed");
+const preview = document.getElementById("preview"), previewSkeleton = document.getElementById("previewSkeleton");
+const thumb = document.getElementById("thumb"), pTitle = document.getElementById("pTitle"), pSub = document.getElementById("pSub");
+const goBtn = document.getElementById("goBtn");
 
-fetch("/env").then(r=>r.json()).then(j=>{
-  HAS_FFMPEG=!!j.ffmpeg;
-  if(!HAS_FFMPEG){msg.textContent="⚠️ FFmpeg missing — MP3/merge disabled.";msg.style.color="#f59e0b";}
+function setMsg(t, isErr=false){
+  msg.textContent = t || "";
+  msg.style.color = isErr ? "#fb7185" : "";
+}
+function setBusy(b){
+  goBtn.disabled = b;
+  goBtn.style.opacity = b ? 0.7 : 1;
+}
+
+fetch("/env").then(r=>r.json()).then(j=>{ HAS_FFMPEG = !!j.ffmpeg; if(!HAS_FFMPEG) setMsg("FFmpeg not found — some formats disabled"); });
+
+let _deb=null;
+urlIn.addEventListener("input", ()=>{
+  clearTimeout(_deb);
+  const u = urlIn.value.trim();
+  if(!/^https?:\/\//i.test(u)){ preview.style.display='none'; previewSkeleton.style.display='none'; return; }
+  previewSkeleton.style.display = 'flex'; preview.style.display = 'none';
+  _deb = setTimeout(()=> fetchInfo(u), 450);
 });
 
 async function fetchInfo(url){
   try{
-    const r=await fetch("/info",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url})});
-    const j=await r.json();
-    if(!r.ok || j.error){ previewBlock.style.display="none"; return; }
-    pTitle.textContent=j.title||"";
-    pSub.textContent=[j.channel,j.duration_str].filter(Boolean).join(" • ");
-    if(j.thumbnail){ thumb.src=j.thumbnail; thumb.alt=j.title; }
-    previewBlock.style.display="block";
-  }catch(e){ previewBlock.style.display="none"; }
+    const r = await fetch("/info", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({url})});
+    const j = await r.json();
+    if(!r.ok || j.error){ preview.style.display='none'; previewSkeleton.style.display='none'; setMsg("Preview failed", true); return; }
+    pTitle.textContent = j.title || '';
+    pSub.textContent = [j.channel, j.duration_str].filter(Boolean).join(' • ');
+    if(j.thumbnail){ thumb.src = j.thumbnail; thumb.alt = j.title; }
+    previewSkeleton.style.display = 'none';
+    preview.style.display = 'flex';
+    setMsg('');
+  }catch(e){
+    previewSkeleton.style.display = 'none';
+    preview.style.display = 'none';
+    setMsg('Preview error', true);
+  }
 }
 
-document.getElementById("url").addEventListener("input", ()=>{
-  clearTimeout(window._deb);
-  const u=document.getElementById("url").value.trim();
-  if(!/^https?:\/\//i.test(u)){ previewBlock.style.display="none"; return; }
-  window._deb=setTimeout(()=>fetchInfo(u),500);
-});
-
-document.getElementById("frm").addEventListener("submit", async (e)=>{
-  e.preventDefault();
-  msg.textContent="⏳ Starting...";
-  const url=document.getElementById("url").value.trim();
-  const fmt=document.getElementById("format").value;
-  const name=document.getElementById("name").value.trim();
+document.getElementById("frm").addEventListener("submit", async (ev)=>{
+  ev.preventDefault();
+  setMsg('Starting download...');
+  setBusy(true);
+  const url = urlIn.value.trim(), fmt = formatSel.value, filename = nameIn.value.trim();
+  if(!/^https?:\/\//i.test(url)){ setMsg('Please paste a valid URL', true); setBusy(false); return; }
   try{
-    const r=await fetch("/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url,format_choice:fmt,filename:name})});
-    const j=await r.json();job=j.job_id;poll();
-  }catch(err){msg.textContent="Error starting download.";msg.style.color="#fb7185";job=null;}
+    const r = await fetch('/start', {method:'POST', headers:{"Content-Type":"application/json"}, body: JSON.stringify({url, format_choice: fmt, filename})});
+    const j = await r.json();
+    if(!r.ok){ setMsg(j.error || 'Failed to start', true); setBusy(false); return; }
+    job = j.job_id; setMsg('Downloading…'); poll();
+  }catch(err){
+    setMsg('Network error', true);
+    setBusy(false);
+  }
 });
 
-function fmtBytes(n){if(!n)return"0 MB/s";const mb=n/1024/1024;return(mb<0.1?mb.toFixed(2):mb.toFixed(1))+" MB/s";}
+function fmtBytes(n){ if(!n) return '0 MB/s'; const mb = n/1024/1024; return (mb<0.1?mb.toFixed(2):mb.toFixed(1))+' MB/s'; }
 
 async function poll(){
-  if(!job)return;
+  if(!job) return;
   try{
-    const r=await fetch("/progress/"+job);
-    if(r.status===404){msg.textContent="Job expired.";job=null;return;}
-    const p=await r.json();
-    const pct=Math.max(0, Math.min(100, p.percent||0));
-    bar.style.width=pct+"%";
-    pctTxt.textContent=pct+"%";
-    speedTxt.textContent=fmtBytes(p.speed_bytes);
-    if(p.status==="finished"){msg.textContent="✅ Done — preparing file...";window.location="/fetch/"+job;job=null;return;}
-    else if(p.status==="error"){msg.textContent="❌ "+(p.error||"Download failed");job=null;return;}
-    setTimeout(poll,700);
-  }catch(e){msg.textContent="Network error";job=null;}
+    const r = await fetch('/progress/' + job);
+    if(r.status === 404){ setMsg('Job expired', true); setBusy(false); job=null; return; }
+    const p = await r.json();
+    const pctv = Math.max(0, Math.min(100, p.percent || 0));
+    bar.style.width = pctv + '%';
+    pct.textContent = pctv + '%';
+    speed.textContent = fmtBytes(p.speed_bytes);
+    if(p.status === 'finished'){
+      setMsg('Done — preparing file...');
+      // small flash animation
+      pct.classList.add('flash'); setTimeout(()=>pct.classList.remove('flash'), 600);
+      // give UI a short moment before redirecting to fetch (so users see Done)
+      setTimeout(()=> { window.location = '/fetch/' + job; job=null; setBusy(false); }, 700);
+      return;
+    } else if(p.status === 'error'){
+      setMsg('Error: ' + (p.error || 'Download failed'), true);
+      setBusy(false); job=null; return;
+    }
+    setTimeout(poll, 700);
+  }catch(e){
+    setMsg('Network error', true);
+    setBusy(false); job=null;
+  }
 }
 </script>
 </body>
 </html>
 """
 
-# ---------- Jobs ----------
+# ---------- Jobs & server logic (unchanged core) ----------
 JOBS = {}
 
 class Job:
@@ -215,7 +389,7 @@ class Job:
         self.error = None
         self.speed_bytes = 0.0
         self.created_at = time.time()
-        self.downloaded_at = None   # set when user fetches
+        self.downloaded_at = None
         JOBS[self.id] = self
 
 YTDLP_URL_RE = re.compile(r"^https?://", re.I)
@@ -310,35 +484,29 @@ def progress(id):
     if not j: abort(404)
     return jsonify({"percent":j.percent,"status":j.status,"error":j.error,"speed_bytes":j.speed_bytes})
 
-# ---------- fetch: send file and mark as downloaded ----------
 @app.get("/fetch/<id>")
 def fetch(id):
     j = JOBS.get(id)
-    if not j:
-        abort(404)
+    if not j: abort(404)
     if not j.file or not os.path.exists(j.file):
         return jsonify({"error":"File not ready"}), 400
 
     filename = os.path.basename(j.file)
-
-    # mark as downloaded; cleanup worker will remove after DOWNLOAD_KEEP_SECONDS
     j.downloaded_at = time.time()
     j.status = "downloaded"
-
     try:
         return send_file(j.file, as_attachment=True, download_name=filename)
     except Exception as e:
-        # don't delete job here; let user retry
         return jsonify({"error":"Failed to stream file","detail":str(e)}), 500
 
 @app.get("/env")
 def env():
     return jsonify({"ffmpeg": HAS_FFMPEG})
 
-# ---------- Background cleanup for old finished/error/downloaded jobs ----------
-CLEANUP_INTERVAL = int(os.environ.get("CLEANUP_INTERVAL_SECONDS", 60 * 10))   # default every 10 minutes
-JOB_TTL_SECONDS   = int(os.environ.get("JOB_TTL_SECONDS", 60 * 60 * 1))       # default 1 hour for finished jobs
-DOWNLOAD_KEEP_SECONDS = int(os.environ.get("DOWNLOAD_KEEP_SECONDS", 60))     # default keep file 60s after fetch
+# Background cleanup
+CLEANUP_INTERVAL = int(os.environ.get("CLEANUP_INTERVAL_SECONDS", 60 * 10))
+JOB_TTL_SECONDS   = int(os.environ.get("JOB_TTL_SECONDS", 60 * 60 * 1))
+DOWNLOAD_KEEP_SECONDS = int(os.environ.get("DOWNLOAD_KEEP_SECONDS", 60))
 
 def cleanup_worker():
     while True:
@@ -350,17 +518,14 @@ def cleanup_worker():
                 created_at = getattr(job, "created_at", None) or now
                 age = now - created_at
 
-                # finished/error older than TTL -> remove
                 if status in ("finished", "error") and age > JOB_TTL_SECONDS:
                     remove.append(jid)
 
-                # downloaded: remove after DOWNLOAD_KEEP_SECONDS since user fetched
                 if status == "downloaded":
                     downloaded_at = getattr(job, "downloaded_at", None) or 0
                     if (now - downloaded_at) > DOWNLOAD_KEEP_SECONDS:
                         remove.append(jid)
 
-                # optional: stale queued jobs (very old)
                 if status == "queued" and age > (JOB_TTL_SECONDS * 6):
                     remove.append(jid)
 
