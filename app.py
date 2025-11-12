@@ -23,7 +23,7 @@ def ffmpeg_path():
     return which("ffmpeg") or "/usr/bin/ffmpeg"
 HAS_FFMPEG = os.path.exists(ffmpeg_path())
 
-# ---------- Beautiful Modern HTML (added speed & ETA UI) ----------
+# ---------- Beautiful Modern HTML ----------
 HTML = r"""
 <!doctype html>
 <html lang="en">
@@ -183,7 +183,7 @@ footer{margin-top:20px;text-align:center;color:var(--muted);font-size:12px;}
 
 <main class="card">
   <h2>⬇️ Download from YouTube</h2>
-  <p class="small">Paste your link, select format, and start. Progress and speed show in real-time.</p>
+  <p class="small">Paste your link, select format, and start. Progress and ETA show in real-time.</p>
 
   <div id="preview" class="preview">
     <div class="preview-row">
@@ -213,11 +213,10 @@ footer{margin-top:20px;text-align:center;color:var(--muted);font-size:12px;}
 
   <div class="progress"><div id="bar" class="bar"></div><div id="pct" class="pct">0%</div></div>
 
-  <!-- ADDED: speed (one decimal) and ETA -->
+  <!-- ADDED: ETA display only -->
   <div class="meta-row">
     <div id="msg" class="small-muted"></div>
     <div class="meta-right">
-      <div id="speedLabel" class="meta-item">0.0 Mbps</div>
       <div id="etaLabel" class="meta-item">ETA: 00:00</div>
     </div>
   </div>
@@ -231,7 +230,7 @@ footer{margin-top:20px;text-align:center;color:var(--muted);font-size:12px;}
 let job=null;
 const bar=document.getElementById("bar"),pct=document.getElementById("pct"),msg=document.getElementById("msg");
 const urlIn=document.getElementById("url"),thumb=document.getElementById("thumb"),preview=document.getElementById("preview"),pTitle=document.getElementById("pTitle"),pSub=document.getElementById("pSub");
-const speedLabel = document.getElementById("speedLabel"), etaLabel = document.getElementById("etaLabel");
+const etaLabel = document.getElementById("etaLabel");
 
 document.getElementById("frm").addEventListener("submit",async(e)=>{
   e.preventDefault();
@@ -263,16 +262,7 @@ async function fetchInfo(url){
   }catch(e){preview.style.display="none";}
 }
 
-// helper functions
-function mbpsFromBytesPerSec(bps){
-  if(!bps || bps <= 0) return 0.0;
-  return (bps * 8) / 1_000_000;  // megabits per second
-}
-// show one decimal place only (e.g. 60.4 Mbps, 6.1 Mbps, 0.0 Mbps)
-function fmtMbps(n){
-  if(!n || n === 0) return '0.0 Mbps';
-  return n.toFixed(1) + ' Mbps';
-}
+// helper to format seconds -> MM:SS
 function fmtTimeSecs(s){
   if(!isFinite(s) || s <= 0) return '00:00';
   const sec = Math.round(s);
@@ -290,11 +280,7 @@ async function poll(){
     const pctv=Math.max(0,Math.min(100,p.percent||0));
     bar.style.width=pctv+"%";pct.textContent=pctv+"%";
 
-    // update speed label (speed_bytes provided by backend)
-    const mbps = mbpsFromBytesPerSec(p.speed_bytes || 0);
-    speedLabel.textContent = fmtMbps(mbps);
-
-    // calculate ETA using total_bytes, downloaded_bytes, speed_bytes
+    // ETA calculation using total_bytes, downloaded_bytes and speed_bytes
     let etaText = '00:00';
     if(p.total_bytes && p.downloaded_bytes && p.speed_bytes && p.speed_bytes > 0 && p.total_bytes > p.downloaded_bytes){
       const remaining = (p.total_bytes - p.downloaded_bytes);
@@ -321,7 +307,7 @@ async function poll(){
 </html>
 """
 
-# ---------- Backend (track bytes + speed for ETA) ----------
+# ---------- Backend (track bytes for ETA) ----------
 JOBS = {}
 
 class Job:
@@ -354,8 +340,7 @@ def format_map_for_env():
 
 def run_download(job,url,fmt_key,filename):
     try:
-        if not YTDLP_URL_RE.match(url):
-            job.status="error";job.error="Invalid URL";return
+        if not YTDLP_URL_RE.match(url):job.status="error";job.error="Invalid URL";return
         fmt=format_map_for_env().get(fmt_key)
         if fmt is None:
             job.status="error";job.error="Format not available";return
@@ -377,16 +362,8 @@ def run_download(job,url,fmt_key,filename):
 
         base=(filename.strip() if filename else "%(title)s").rstrip(".")
         out=os.path.join(job.tmp,base+".%(ext)s")
-        opts={
-            "format":fmt,
-            "outtmpl":out,
-            "merge_output_format":"mp4",
-            "cookiefile":"cookies.txt" if os.path.exists("cookies.txt") else None,
-            "progress_hooks":[hook],
-            "quiet":True,
-            "no_warnings":True,
-            "noplaylist":True
-        }
+        opts={"format":fmt,"outtmpl":out,"merge_output_format":"mp4","cookiefile":"cookies.txt" if os.path.exists("cookies.txt") else None,
+              "progress_hooks":[hook],"quiet":True,"no_warnings":True,"noplaylist":True}
         opts = {k:v for k,v in opts.items() if v is not None}
         if HAS_FFMPEG:
             opts["ffmpeg_location"]=ffmpeg_path()
@@ -416,10 +393,7 @@ def info():
     try:
         with YoutubeDL({"skip_download":True,"quiet":True,"noplaylist":True,"cookiefile":"cookies.txt" if os.path.exists("cookies.txt") else None}) as y:
             info=y.extract_info(url,download=False)
-        title=info.get("title","")
-        channel=info.get("uploader") or info.get("channel","")
-        thumb=info.get("thumbnail")
-        dur=info.get("duration") or 0
+        title=info.get("title","");channel=info.get("uploader") or info.get("channel","");thumb=info.get("thumbnail");dur=info.get("duration") or 0
         return jsonify({"title":title,"thumbnail":thumb,"channel":channel,"duration_str":f"{dur//60}:{dur%60:02d}"})
     except Exception:
         return jsonify({"error":"Preview failed"}),400
