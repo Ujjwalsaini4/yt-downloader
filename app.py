@@ -7,7 +7,7 @@ import glob
 import threading
 import uuid
 import re
-from flask import Flask, request, jsonify, Response, render_template_string, abort, stream_with_context
+from flask import Flask, request, jsonify, Response, render_template_string, abort, send_file
 from shutil import which
 from yt_dlp import YoutubeDL
 
@@ -30,7 +30,7 @@ HTML = r"""
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Hyper Downloader</title>
+<title>💎 Hyper Downloader</title>
 <style>
 :root{ --bg:#0b0f19; --card:#0f1724; --text:#e6eefc; --muted:#97a6b2; --border:#192230;
   --grad-1:#8b5cf6; --grad-2:#06b6d4; --grad:linear-gradient(90deg,var(--grad-1),var(--grad-2)); }
@@ -84,15 +84,15 @@ button:disabled{opacity:.6;cursor:not-allowed}
         <div class="brand">Hyper <span>Downloader</span></div>
       </div>
       <nav>
-        <a href="#features">Premium</a>
-        <a href="#faq">FAQ</a>
+        <a href="#features">💎 Premium</a>
+        <a href="#faq">❓ FAQ</a>
         <a href="#" class="btn">Go Premium</a>
       </nav>
     </header>
 
     <section class="card">
-      <h2>Download from YouTube</h2>
-      <p class="lead">Paste link, choose format and download.</p>
+      <h2>⬇️ Download from YouTube</h2>
+      <p class="lead">🎬 Paste your video link, choose format, and start downloading.</p>
 
       <div id="preview" class="preview">
         <div class="preview-row">
@@ -116,7 +116,7 @@ button:disabled{opacity:.6;cursor:not-allowed}
         </select>
         <label>Filename (optional)</label>
         <input id="name" placeholder="My video">
-        <button id="goBtn" type="submit">Start Download</button>
+        <button id="goBtn" type="submit">⚡ Start Download</button>
       </form>
 
       <div class="progress"><div id="bar" class="bar"></div><div class="pct" id="pctTxt">0%</div></div>
@@ -124,16 +124,17 @@ button:disabled{opacity:.6;cursor:not-allowed}
     </section>
 
     <section id="features" class="card">
-      <h2>Premium Features</h2>
+      <h2>💎 Premium Features</h2>
       <ul>
-        <li>4K + MP3 support</li>
-        <li>Progress with speed & percent</li>
-        <li>Auto cleanup of old files</li>
+        <li>4K + MP3 download support</li>
+        <li>Progress bar with speed & percent</li>
+        <li>Beautiful gradient UI</li>
+        <li>Fully mobile responsive</li>
       </ul>
     </section>
 
     <section id="faq" class="card">
-      <h2>FAQ</h2>
+      <h2>❓ FAQ</h2>
       <p>If options are disabled, your server may not have FFmpeg installed.</p>
     </section>
   </div>
@@ -145,7 +146,7 @@ const previewBlock=document.getElementById("preview"), thumb=document.getElement
 
 fetch("/env").then(r=>r.json()).then(j=>{
   HAS_FFMPEG=!!j.ffmpeg;
-  if(!HAS_FFMPEG){msg.textContent="FFmpeg not found - MP3 disabled.";msg.style.color="#f59e0b";}
+  if(!HAS_FFMPEG){msg.textContent="⚠️ FFmpeg missing — MP3/merge disabled.";msg.style.color="#f59e0b";}
 });
 
 async function fetchInfo(url){
@@ -169,7 +170,7 @@ document.getElementById("url").addEventListener("input", ()=>{
 
 document.getElementById("frm").addEventListener("submit", async (e)=>{
   e.preventDefault();
-  msg.textContent="Starting...";
+  msg.textContent="⏳ Starting...";
   const url=document.getElementById("url").value.trim();
   const fmt=document.getElementById("format").value;
   const name=document.getElementById("name").value.trim();
@@ -187,12 +188,12 @@ async function poll(){
     const r=await fetch("/progress/"+job);
     if(r.status===404){msg.textContent="Job expired.";job=null;return;}
     const p=await r.json();
-    const pct=Math.max(0,Math.min(100,p.percent||0));
+    const pct=Math.max(0, Math.min(100, p.percent||0));
     bar.style.width=pct+"%";
     pctTxt.textContent=pct+"%";
     speedTxt.textContent=fmtBytes(p.speed_bytes);
-    if(p.status==="finished"){msg.textContent="Done — preparing file...";window.location="/fetch/"+job;job=null;return;}
-    else if(p.status==="error"){msg.textContent="Error: "+(p.error||"Download failed");job=null;return;}
+    if(p.status==="finished"){msg.textContent="✅ Done — preparing file...";window.location="/fetch/"+job;job=null;return;}
+    else if(p.status==="error"){msg.textContent="❌ "+(p.error||"Download failed");job=null;return;}
     setTimeout(poll,700);
   }catch(e){msg.textContent="Network error";job=null;}
 }
@@ -214,6 +215,7 @@ class Job:
         self.error = None
         self.speed_bytes = 0.0
         self.created_at = time.time()
+        self.downloaded_at = None   # set when user fetches
         JOBS[self.id] = self
 
 YTDLP_URL_RE = re.compile(r"^https?://", re.I)
@@ -308,50 +310,35 @@ def progress(id):
     if not j: abort(404)
     return jsonify({"percent":j.percent,"status":j.status,"error":j.error,"speed_bytes":j.speed_bytes})
 
-# Stream-and-cleanup: stream file to client, then remove temp folder
-def stream_file_and_cleanup(path, job_id):
-    try:
-        with open(path, "rb") as f:
-            while True:
-                data = f.read(128 * 1024)
-                if not data:
-                    break
-                yield data
-    finally:
-        j = JOBS.pop(job_id, None)
-        if j:
-            try:
-                shutil.rmtree(getattr(j, "tmp", ""), ignore_errors=True)
-                print(f"[fetch-cleanup] removed job {job_id}")
-            except Exception as e:
-                print(f"[fetch-cleanup] failed to remove {job_id}: {e}")
-
+# ---------- fetch: send file and mark as downloaded ----------
 @app.get("/fetch/<id>")
 def fetch(id):
     j = JOBS.get(id)
-    if not j: abort(404)
+    if not j:
+        abort(404)
     if not j.file or not os.path.exists(j.file):
         return jsonify({"error":"File not ready"}), 400
 
     filename = os.path.basename(j.file)
+
+    # mark as downloaded; cleanup worker will remove after DOWNLOAD_KEEP_SECONDS
+    j.downloaded_at = time.time()
+    j.status = "downloaded"
+
     try:
-        size = os.path.getsize(j.file)
-    except Exception:
-        size = None
-
-    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
-    if size is not None:
-        headers["Content-Length"] = str(size)
-
-    return Response(stream_with_context(stream_file_and_cleanup(j.file, id)), headers=headers, mimetype="application/octet-stream")
+        return send_file(j.file, as_attachment=True, download_name=filename)
+    except Exception as e:
+        # don't delete job here; let user retry
+        return jsonify({"error":"Failed to stream file","detail":str(e)}), 500
 
 @app.get("/env")
 def env():
     return jsonify({"ffmpeg": HAS_FFMPEG})
 
-# Background cleanup for old finished/error jobs
-CLEANUP_INTERVAL = int(os.environ.get("CLEANUP_INTERVAL_SECONDS", 60 * 10))
-JOB_TTL_SECONDS   = int(os.environ.get("JOB_TTL_SECONDS", 60 * 60 * 1))
+# ---------- Background cleanup for old finished/error/downloaded jobs ----------
+CLEANUP_INTERVAL = int(os.environ.get("CLEANUP_INTERVAL_SECONDS", 60 * 10))   # default every 10 minutes
+JOB_TTL_SECONDS   = int(os.environ.get("JOB_TTL_SECONDS", 60 * 60 * 1))       # default 1 hour for finished jobs
+DOWNLOAD_KEEP_SECONDS = int(os.environ.get("DOWNLOAD_KEEP_SECONDS", 60))     # default keep file 60s after fetch
 
 def cleanup_worker():
     while True:
@@ -363,8 +350,17 @@ def cleanup_worker():
                 created_at = getattr(job, "created_at", None) or now
                 age = now - created_at
 
+                # finished/error older than TTL -> remove
                 if status in ("finished", "error") and age > JOB_TTL_SECONDS:
                     remove.append(jid)
+
+                # downloaded: remove after DOWNLOAD_KEEP_SECONDS since user fetched
+                if status == "downloaded":
+                    downloaded_at = getattr(job, "downloaded_at", None) or 0
+                    if (now - downloaded_at) > DOWNLOAD_KEEP_SECONDS:
+                        remove.append(jid)
+
+                # optional: stale queued jobs (very old)
                 if status == "queued" and age > (JOB_TTL_SECONDS * 6):
                     remove.append(jid)
 
