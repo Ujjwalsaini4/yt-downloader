@@ -182,7 +182,7 @@ footer{margin-top:20px;text-align:center;color:var(--muted);font-size:12px;}
 </header>
 
 <main class="card">
-  <h2>⬇️ Download from YouTube</h2>
+  <h2>📥 Download from YouTube</h2>
   <p class="small">Paste your link, select format, and start. Progress and speed show in real-time.</p>
 
   <div id="preview" class="preview">
@@ -267,8 +267,13 @@ function mbpsFromBytesPerSec(bps){
   if(!bps || bps <= 0) return 0.0;
   return (bps * 8) / 1_000_000;  // megabits per second (decimal)
 }
+
 function fmtMbps(n){
-  return n === 0 ? '0.00 Mbps' : n.toFixed(2) + ' Mbps';
+  if (!n || n === 0) return '0.0 Mbps';
+  // use one decimal place
+  return n.toFixed(1) + ' Mbps';
+}
+
 }
 function fmtTimeSecs(s){
   if(!isFinite(s) || s <= 0) return '00:00';
