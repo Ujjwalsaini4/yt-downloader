@@ -177,7 +177,7 @@ footer{margin-top:20px;text-align:center;color:var(--muted);font-size:12px;}
 </header>
 
 <main class="card">
-  <h2>⬇️ Download from YouTube</h2>
+  <h2>📥 Download from YouTube</h2>
   <p class="small">Paste your link, select format, and start. Progress and speed show in real-time.</p>
 
   <div id="preview" class="preview">
