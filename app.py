@@ -136,7 +136,7 @@ button:disabled{opacity:.6;cursor:not-allowed;}
     </header>
 
     <div class="card">
-      <h2>⬇️ Download from YouTube</h2>
+      <h2>📥 Download from YouTube</h2>
       <p style="color:var(--muted);margin-top:6px;">🎬 Paste your video link, preview it, choose quality, and hit download.</p>
 
       <div id="preview" class="preview">
