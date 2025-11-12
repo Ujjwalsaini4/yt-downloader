@@ -142,7 +142,7 @@ button:disabled{opacity:.6;cursor:not-allowed}
       <nav>
         <a href="#features">💎 Premium</a>
         <a href="#faq">❓ FAQ</a>
-      //  <a href="#" class="btn">Go Premium</a>
+      <!-- <a href="#" class="btn">Go Premium</a> -->
       </nav>
     </header>
 
