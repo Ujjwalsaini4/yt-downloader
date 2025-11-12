@@ -23,7 +23,7 @@ def ffmpeg_path():
     return which("ffmpeg") or "/usr/bin/ffmpeg"
 HAS_FFMPEG = os.path.exists(ffmpeg_path())
 
-# ---------- Beautiful Modern HTML ----------
+# ---------- HTML (UI includes progress, speed, ETA) ----------
 HTML = r"""
 <!doctype html>
 <html lang="en">
@@ -76,18 +76,9 @@ header{
   color:#fff;font-weight:800;font-size:18px;
   box-shadow:0 8px 24px rgba(6,182,212,.25);
 }
-/* gentle background pulse for subtle shine */
-@keyframes bgPulse {
-  0% { filter: hue-rotate(0deg) saturate(100%); }
-  50% { filter: hue-rotate(8deg) saturate(110%); }
-  100% { filter: hue-rotate(0deg) saturate(100%); }
-}
 .logo { animation: bgPulse 8s ease-in-out infinite; }
-.brand-title span{
-  background:var(--accent);
-  -webkit-background-clip:text;
-  color:transparent;
-}
+@keyframes bgPulse { 0%{filter:hue-rotate(0deg)} 50%{filter:hue-rotate(8deg)} 100%{filter:hue-rotate(0deg)} }
+.brand-title span{ background:var(--accent); -webkit-background-clip:text; color:transparent; }
 
 /* Card */
 .card{
@@ -115,8 +106,8 @@ button{
   box-shadow:0 8px 28px rgba(6,182,212,.25);
   cursor:pointer;transition:transform .08s;
 }
-button:active{transform:scale(.98);}
-button[disabled]{opacity:.6;cursor:not-allowed;}
+button:active{transform:scale(.98)}
+button[disabled]{opacity:.6;cursor:not-allowed}
 
 /* Grid responsive */
 .grid{display:grid;gap:12px;}
@@ -124,41 +115,16 @@ button[disabled]{opacity:.6;cursor:not-allowed;}
 .full{grid-column:1/-1;}
 
 /* Progress bar */
-.progress{
-  margin-top:14px;height:14px;border-radius:999px;
-  background:rgba(255,255,255,0.04);
-  overflow:hidden;position:relative;
-}
-.bar{
-  width:0%;height:100%;
-  background:var(--accent);
-  transition:width .3s ease;
-  box-shadow:0 0 20px rgba(6,182,212,.4);
-}
-.pct{
-  position:absolute;left:50%;top:50%;
-  transform:translate(-50%,-50%);
-  color:#fff;font-weight:700;font-size:13px;
-  text-shadow:0 1px 2px rgba(0,0,0,0.5);
-}
+.progress{margin-top:14px;height:14px;border-radius:999px;background:rgba(255,255,255,0.04);overflow:hidden;position:relative;}
+.bar{width:0%;height:100%;background:var(--accent);transition:width .3s ease;box-shadow:0 0 20px rgba(6,182,212,.4);}
+.pct{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);color:#fff;font-weight:700;font-size:13px;text-shadow:0 1px 2px rgba(0,0,0,0.5);}
 
-/* sheen overlay on progress */
-.bar::after{
-  content:"";
-  position:absolute;inset:0;
-  background:linear-gradient(90deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02), rgba(255,255,255,0.06));
-  transform:translateX(-40%);opacity:0.6;filter:blur(6px);
-  animation: sheen 2.4s linear infinite;
-}
+/* sheen */
+.bar::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02), rgba(255,255,255,0.06));transform:translateX(-40%);opacity:0.6;filter:blur(6px);animation:sheen 2.4s linear infinite;}
 @keyframes sheen{100%{transform:translateX(120%)}}
 
 /* Preview */
-.preview{
-  display:none;margin-top:10px;padding:10px;
-  background:rgba(255,255,255,0.02);
-  border-radius:12px;border:1px solid rgba(255,255,255,0.05);
-  box-shadow:inset 0 1px 0 rgba(255,255,255,0.03);
-}
+.preview{display:none;margin-top:10px;padding:10px;background:rgba(255,255,255,0.02);border-radius:12px;border:1px solid rgba(255,255,255,0.05);box-shadow:inset 0 1px 0 rgba(255,255,255,0.03);}
 .preview-row{display:flex;gap:10px;align-items:center;}
 .thumb{width:120px;height:68px;border-radius:8px;object-fit:cover;background:#081627;}
 .meta .title{font-weight:700;font-size:15px;}
@@ -183,7 +149,7 @@ footer{margin-top:20px;text-align:center;color:var(--muted);font-size:12px;}
 
 <main class="card">
   <h2>⬇️ Download from YouTube</h2>
-  <p class="small">Paste your link, select format, and start. Progress and ETA show in real-time.</p>
+  <p class="small">Paste your link, select format, and start. Progress, speed, and ETA show in real-time.</p>
 
   <div id="preview" class="preview">
     <div class="preview-row">
@@ -213,10 +179,10 @@ footer{margin-top:20px;text-align:center;color:var(--muted);font-size:12px;}
 
   <div class="progress"><div id="bar" class="bar"></div><div id="pct" class="pct">0%</div></div>
 
-  <!-- ADDED: ETA display only -->
   <div class="meta-row">
     <div id="msg" class="small-muted"></div>
     <div class="meta-right">
+      <div id="speedLabel" class="meta-item">0.0 Mbps</div>
       <div id="etaLabel" class="meta-item">ETA: 00:00</div>
     </div>
   </div>
@@ -230,7 +196,7 @@ footer{margin-top:20px;text-align:center;color:var(--muted);font-size:12px;}
 let job=null;
 const bar=document.getElementById("bar"),pct=document.getElementById("pct"),msg=document.getElementById("msg");
 const urlIn=document.getElementById("url"),thumb=document.getElementById("thumb"),preview=document.getElementById("preview"),pTitle=document.getElementById("pTitle"),pSub=document.getElementById("pSub");
-const etaLabel = document.getElementById("etaLabel");
+const speedLabel = document.getElementById("speedLabel"), etaLabel = document.getElementById("etaLabel");
 
 document.getElementById("frm").addEventListener("submit",async(e)=>{
   e.preventDefault();
@@ -262,7 +228,12 @@ async function fetchInfo(url){
   }catch(e){preview.style.display="none";}
 }
 
-// helper to format seconds -> MM:SS
+// helper functions
+function mbpsFromBytesPerSec(bps){
+  if(!bps || bps <= 0) return 0.0;
+  return (bps * 8) / 1_000_000;  // megabits per second
+}
+function fmtMbps(n){ if(!n || n === 0) return '0.0 Mbps'; return n.toFixed(1) + ' Mbps'; }
 function fmtTimeSecs(s){
   if(!isFinite(s) || s <= 0) return '00:00';
   const sec = Math.round(s);
@@ -280,14 +251,17 @@ async function poll(){
     const pctv=Math.max(0,Math.min(100,p.percent||0));
     bar.style.width=pctv+"%";pct.textContent=pctv+"%";
 
-    // ETA calculation using total_bytes, downloaded_bytes and speed_bytes
+    // speed (bytes/sec -> Mbps one decimal)
+    const mbps = mbpsFromBytesPerSec(p.speed_bytes || 0);
+    speedLabel.textContent = fmtMbps(mbps);
+
+    // ETA: compute from total_bytes, downloaded_bytes, speed_bytes
     let etaText = '00:00';
     if(p.total_bytes && p.downloaded_bytes && p.speed_bytes && p.speed_bytes > 0 && p.total_bytes > p.downloaded_bytes){
       const remaining = (p.total_bytes - p.downloaded_bytes);
       const secs = remaining / p.speed_bytes;
       etaText = fmtTimeSecs(secs);
     } else if (p.percent && p.percent > 0 && p.downloaded_bytes && p.speed_bytes && p.speed_bytes > 0) {
-      // fallback: estimate total from percent
       const assumedTotal = (p.downloaded_bytes * 100) / p.percent;
       if(assumedTotal > p.downloaded_bytes){
         const remaining = assumedTotal - p.downloaded_bytes;
@@ -307,7 +281,7 @@ async function poll(){
 </html>
 """
 
-# ---------- Backend (track bytes for ETA) ----------
+# ---------- Backend (track bytes + speed + improved fetch/cleanup logging) ----------
 JOBS = {}
 
 class Job:
@@ -340,8 +314,9 @@ def format_map_for_env():
 
 def run_download(job,url,fmt_key,filename):
     try:
-        if not YTDLP_URL_RE.match(url):job.status="error";job.error="Invalid URL";return
-        fmt=format_map_for_env().get(fmt_key)
+        if not YTDLP_URL_RE.match(url):
+            job.status="error";job.error="Invalid URL";return
+        fmt = format_map_for_env().get(fmt_key)
         if fmt is None:
             job.status="error";job.error="Format not available";return
 
@@ -362,8 +337,16 @@ def run_download(job,url,fmt_key,filename):
 
         base=(filename.strip() if filename else "%(title)s").rstrip(".")
         out=os.path.join(job.tmp,base+".%(ext)s")
-        opts={"format":fmt,"outtmpl":out,"merge_output_format":"mp4","cookiefile":"cookies.txt" if os.path.exists("cookies.txt") else None,
-              "progress_hooks":[hook],"quiet":True,"no_warnings":True,"noplaylist":True}
+        opts={
+            "format":fmt,
+            "outtmpl":out,
+            "merge_output_format":"mp4",
+            "cookiefile":"cookies.txt" if os.path.exists("cookies.txt") else None,
+            "progress_hooks":[hook],
+            "quiet":True,
+            "no_warnings":True,
+            "noplaylist":True
+        }
         opts = {k:v for k,v in opts.items() if v is not None}
         if HAS_FFMPEG:
             opts["ffmpeg_location"]=ffmpeg_path()
@@ -376,8 +359,10 @@ def run_download(job,url,fmt_key,filename):
         files=glob.glob(job.tmp+"/*")
         job.file = max(files, key=os.path.getsize) if files else None
         job.status="finished"
+        app.logger.info(f"download finished for job {job.id}, file={job.file}")
     except Exception as e:
         job.status="error";job.error=str(e)[:300]
+        app.logger.exception(f"download error for job {job.id}: {e}")
 
 @app.post("/start")
 def start():
@@ -395,7 +380,8 @@ def info():
             info=y.extract_info(url,download=False)
         title=info.get("title","");channel=info.get("uploader") or info.get("channel","");thumb=info.get("thumbnail");dur=info.get("duration") or 0
         return jsonify({"title":title,"thumbnail":thumb,"channel":channel,"duration_str":f"{dur//60}:{dur%60:02d}"})
-    except Exception:
+    except Exception as e:
+        app.logger.exception(f"preview failed for url {url}: {e}")
         return jsonify({"error":"Preview failed"}),400
 
 @app.get("/progress/<id>")
@@ -413,13 +399,19 @@ def progress(id):
 
 @app.get("/fetch/<id>")
 def fetch(id):
-    j=JOBS.get(id)
-    if not j:abort(404)
-    if not j.file or not os.path.exists(j.file):return jsonify({"error":"File not ready"}),400
-    j.downloaded_at=time.time();j.status="downloaded"
+    j = JOBS.get(id)
+    if not j:
+        app.logger.warning(f"/fetch requested but job not found: {id}")
+        abort(404)
+    if not j.file or not os.path.exists(j.file):
+        app.logger.warning(f"/fetch: file missing for job {id}. file={j.file}, status={j.status}")
+        return jsonify({"error":"File not ready or missing on server"}), 404
+    j.downloaded_at = time.time()
+    j.status = "downloaded"
     try:
-        return send_file(j.file,as_attachment=True,download_name=os.path.basename(j.file))
+        return send_file(j.file, as_attachment=True, download_name=os.path.basename(j.file))
     except Exception as e:
+        app.logger.exception(f"/fetch: failed to send file for job {id}: {e}")
         return jsonify({"error":"Failed to send file","detail":str(e)}),500
 
 @app.get("/env")
@@ -428,30 +420,35 @@ def env(): return jsonify({"ffmpeg":HAS_FFMPEG})
 # Cleanup settings
 CLEANUP_INTERVAL = int(os.environ.get("CLEANUP_INTERVAL_SECONDS", 60 * 10))
 JOB_TTL_SECONDS   = int(os.environ.get("JOB_TTL_SECONDS", 60 * 60))
-DOWNLOAD_KEEP_SECONDS = int(os.environ.get("DOWNLOAD_KEEP_SECONDS", 60))
+# keep downloaded files for 1 hour by default (was 60s)
+DOWNLOAD_KEEP_SECONDS = int(os.environ.get("DOWNLOAD_KEEP_SECONDS", 60 * 60))
 
 def cleanup_worker():
     while True:
         try:
-            now=time.time()
-            remove=[]
-            for jid,job in list(JOBS.items()):
-                if job.status in("finished","error") and now-job.created_at>JOB_TTL_SECONDS: remove.append(jid)
-                if job.status=="downloaded" and job.downloaded_at and now-job.downloaded_at>DOWNLOAD_KEEP_SECONDS: remove.append(jid)
+            now = time.time()
+            remove = []
+            for jid, job in list(JOBS.items()):
+                if job.status in ("finished","error") and (now - job.created_at) > JOB_TTL_SECONDS:
+                    remove.append(jid)
+                if job.status == "downloaded" and job.downloaded_at and (now - job.downloaded_at) > DOWNLOAD_KEEP_SECONDS:
+                    remove.append(jid)
             for rid in remove:
-                j=JOBS.pop(rid,None)
+                j = JOBS.pop(rid, None)
                 if j:
                     try:
-                        shutil.rmtree(j.tmp,ignore_errors=True)
-                    except Exception:
-                        pass
+                        app.logger.info(f"cleanup: removing job {rid}, tmp={j.tmp}, status={j.status}")
+                        shutil.rmtree(j.tmp, ignore_errors=True)
+                    except Exception as e:
+                        app.logger.exception(f"cleanup: failed to remove {rid}: {e}")
         except Exception as e:
-            print("[cleanup]",e)
+            app.logger.exception(f"[cleanup] unexpected: {e}")
         time.sleep(CLEANUP_INTERVAL)
-threading.Thread(target=cleanup_worker,daemon=True).start()
+
+threading.Thread(target=cleanup_worker, daemon=True).start()
 
 @app.get("/")
 def home(): return render_template_string(HTML)
 
 if __name__=="__main__":
-    app.run(host="0.0.0.0",port=int(os.environ.get("PORT",5000)))
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT",5000)))
