@@ -130,7 +130,7 @@ button[disabled]{opacity:.6;cursor:not-allowed;}
   overflow:hidden;position:relative;
 }
 .bar{
-  width:0%;height:100%;
+  width:0%;Height:100%;
   background:var(--accent);
   transition:width .3s ease;
   box-shadow:0 0 20px rgba(6,182,212,.4);
@@ -151,14 +151,6 @@ button[disabled]{opacity:.6;cursor:not-allowed;}
   animation: sheen 2.4s linear infinite;
 }
 @keyframes sheen{100%{transform:translateX(120%)}}
-
-/* ETA right-align under progress */
-#eta{
-  margin-top:8px;
-  text-align:right;
-  font-size:13px;
-  color:var(--muted);
-}
 
 /* Preview */
 .preview{
@@ -215,8 +207,8 @@ footer{margin-top:20px;text-align:center;color:var(--muted);font-size:12px;}
   </form>
 
   <div class="progress"><div id="bar" class="bar"></div><div id="pct" class="pct">0%</div></div>
-  <!-- ETA now right-aligned under progress bar -->
-  <div id="eta">ETA: --</div>
+  <!-- ETA added under progress bar -->
+  <div id="eta" style="margin-top:8px;" class="small">ETA: --</div>
 
   <p id="msg" style="margin-top:8px;" class="small"></p>
 </main>
@@ -288,6 +280,8 @@ async function poll(){
         const remain = (total - downloaded)/speed;
         etaText = formatSeconds(remain);
       } else if(pctv>0 && speed>0){
+        // fallback: estimate total by percent if total not provided
+        // total_est = downloaded_est * 100 / percent -> need downloaded (if not present can't fallback)
         if(downloaded>0){
           const total_est = downloaded * 100 / pctv;
           const remain = (total_est - downloaded)/speed;
