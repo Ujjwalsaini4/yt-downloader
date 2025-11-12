@@ -175,7 +175,7 @@ button:disabled{opacity:.6;cursor:not-allowed}
         <button id="goBtn" type="submit">⚡ Start Download</button>
       </form>
 
-      <div class="progress"><div id="bar" class="bar"></div><div class="pct" id="pctTxt">0%</div></div>
+      <div class="progress"><div id="bar" class="bar"></div><div class="pct" id="pctTxt"></div></div> <!-- 0% -->
       <div class="footer"><span id="msg"></span><span id="speedTxt">0 MB/s</span></div>
     </section>
 
