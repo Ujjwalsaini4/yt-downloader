@@ -73,7 +73,7 @@ button:disabled{opacity:.6;cursor:not-allowed}
 .progress{
   position:relative;
   width:100%;
-  height:16px;
+  height:20px;
   background:#0b1623;
   border-radius:999px;
   overflow:hidden;
