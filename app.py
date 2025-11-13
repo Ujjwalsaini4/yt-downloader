@@ -1,3 +1,4 @@
+# app.py
 # -*- coding: utf-8 -*-
 import os
 import time
@@ -7,13 +8,13 @@ import glob
 import threading
 import uuid
 import re
-from flask import Flask, request, jsonify, Response, render_template_string, abort, send_file
+from flask import Flask, request, jsonify, render_template_string, abort, send_file
 from shutil import which
 from yt_dlp import YoutubeDL
 
 app = Flask(__name__)
 
-# Save cookies if present
+# Save cookies if present (from environment)
 cookies_data = os.environ.get("COOKIES_TEXT", "").strip()
 if cookies_data:
     with open("cookies.txt", "w", encoding="utf-8") as f:
@@ -23,7 +24,7 @@ def ffmpeg_path():
     return which("ffmpeg") or "/usr/bin/ffmpeg"
 HAS_FFMPEG = os.path.exists(ffmpeg_path())
 
-# ---------- Beautiful Modern HTML ----------
+# ---------- HTML (kept same as your UI; no layout changes) ----------
 HTML = r"""
 <!doctype html>
 <html lang="en">
@@ -290,7 +291,6 @@ function formatSeconds(s){
 function formatMbps(speed_b){
   if(!speed_b || speed_b <= 0) return "0.0 Mbps";
   const mbps = (speed_b * 8) / 1_000_000;
-  // show 1 decimal, but cap to 2 digits before decimal if very large (user asked earlier)
   return mbps.toFixed(1) + " Mbps";
 }
 
@@ -303,12 +303,11 @@ async function poll(){
     const pctv=Math.max(0,Math.min(100,p.percent||0));
     bar.style.width=pctv+"%";pct.textContent=pctv+"%";
 
-    // show main message text
     if(p.status==="finished"){msg.textContent="✅ Preparing file...";}
     else if(p.status==="error"){msg.textContent="❌ "+(p.error||"Download failed");}
     else msg.textContent = p.status==="downloaded" ? "✅ Download complete (fetching file)..." : "Downloading…";
 
-    // ETA display: prefer server-provided eta_seconds; if null, fallback to client calc
+    // prefer server-provided eta_seconds
     let etaText="--";
     if(typeof p.eta_seconds !== "undefined" && p.eta_seconds !== null){
       etaText = formatSeconds(p.eta_seconds);
@@ -326,8 +325,6 @@ async function poll(){
       }catch(e){etaText="--";}
     }
     etaVal.textContent = etaText;
-
-    // also show (in tooltip on ETA) speed in Mbps for convenience (not altering layout)
     etaEl.title = "Speed: " + formatMbps(p.speed_bytes || 0);
 
     if(p.status==="finished"){ window.location="/fetch/"+job; job=null; return; }
@@ -340,7 +337,7 @@ async function poll(){
 </html>
 """
 
-# ---------- Backend (same as before, auto cleanup enabled) ----------
+# ---------- Backend ----------
 JOBS = {}
 
 class Job:
@@ -354,7 +351,7 @@ class Job:
         self.speed_bytes = 0.0
         self.created_at = time.time()
         self.downloaded_at = None
-        # added fields to support ETA calculation
+        # fields to support ETA calculation
         self.total_bytes = 0
         self.downloaded_bytes = 0
         JOBS[self.id] = self
@@ -362,73 +359,134 @@ class Job:
 YTDLP_URL_RE = re.compile(r"^https?://", re.I)
 
 def format_map_for_env():
+    """
+    Stricter selectors to prefer correct resolution streams.
+    When ffmpeg is available we select video+audio (adaptive) so merging works and sizes
+    differ per resolution. When ffmpeg is not available we pull single-file mp4 fallbacks.
+    """
     if HAS_FFMPEG:
         return {
-            "mp4_720":"bestvideo[height<=720]+bestaudio/best",
-            "mp4_1080":"bestvideo[height<=1080]+bestaudio/best",
-            "mp4_best":"bestvideo+bestaudio/best",
-            "audio_mp3":"bestaudio/best"
+            "mp4_720": "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720]",
+            "mp4_1080": "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080]",
+            "mp4_best": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best",
+            "audio_mp3": "bestaudio"
         }
     else:
-        return {"mp4_best":"best[ext=mp4]/best"}
+        return {
+            "mp4_720": "best[height<=720][ext=mp4]/best[height<=720]",
+            "mp4_1080": "best[height<=1080][ext=mp4]/best[height<=1080]",
+            "mp4_best": "best[ext=mp4]/best",
+            "audio_mp3": "bestaudio"
+        }
 
-def run_download(job,url,fmt_key,filename):
+def run_download(job, url, fmt_key, filename):
     try:
-        if not YTDLP_URL_RE.match(url):job.status="error";job.error="Invalid URL";return
-        fmt=format_map_for_env().get(fmt_key)
+        if not YTDLP_URL_RE.match(url):
+            job.status = "error"
+            job.error = "Invalid URL"
+            return
+
+        fmt = format_map_for_env().get(fmt_key)
+        if fmt is None:
+            job.status = "error"
+            job.error = "Format not supported on this server"
+            return
+
         def hook(d):
-            if d.get("status")=="downloading":
-                total=d.get("total_bytes")or d.get("total_bytes_estimate")or 0
-                downloaded=d.get("downloaded_bytes",0) or 0
-                # update job fields for frontend ETA
-                job.total_bytes = int(total or 0)
-                job.downloaded_bytes = int(downloaded or 0)
-                job.percent = int((downloaded*100)/total) if total else job.percent
-                job.speed_bytes = d.get("speed")or 0
-            elif d.get("status")=="finished":
-                job.percent=100
-        base=(filename.strip() if filename else "%(title)s").rstrip(".")
-        out=os.path.join(job.tmp,base+".%(ext)s")
-        opts={"format":fmt,"outtmpl":out,"merge_output_format":"mp4","cookiefile":"cookies.txt",
-              "progress_hooks":[hook],"quiet":True,"no_warnings":True,"noplaylist":True}
+            try:
+                st = d.get("status")
+                if st == "downloading":
+                    job.status = "downloading"
+                    total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
+                    downloaded = d.get("downloaded_bytes", 0) or 0
+                    job.total_bytes = int(total or 0)
+                    job.downloaded_bytes = int(downloaded or 0)
+                    job.speed_bytes = d.get("speed") or 0
+                    if job.total_bytes:
+                        job.percent = int((job.downloaded_bytes * 100) / job.total_bytes)
+                elif st == "finished":
+                    job.percent = 100
+            except Exception:
+                # keep hook resilient
+                pass
+
+        base = (filename.strip() if filename else "%(title)s").rstrip(".")
+        # include unique job id in outtmpl to avoid collisions and ensure we pick correct file
+        safe_base = f"{job.id}__{base}"
+        out = os.path.join(job.tmp, safe_base + ".%(ext)s")
+
+        opts = {
+            "format": fmt,
+            "outtmpl": out,
+            "progress_hooks": [hook],
+            "quiet": True,
+            "no_warnings": True,
+            "noplaylist": True,
+            # small resiliency tweaks
+            "retries": 3,
+            "socket_timeout": 30,
+            "cookiefile": "cookies.txt",
+        }
+
+        # only set merge_output_format and ffmpeg location if ffmpeg exists
         if HAS_FFMPEG:
-            opts["ffmpeg_location"]=ffmpeg_path()
-            if fmt_key=="audio_mp3":
-                opts["postprocessors"]=[{"key":"FFmpegExtractAudio","preferredcodec":"mp3"}]
-        with YoutubeDL(opts)as y:y.extract_info(url,download=True)
-        files=glob.glob(job.tmp+"/*");job.file=max(files,key=os.path.getsize);job.status="finished"
+            opts["merge_output_format"] = "mp4"
+            opts["ffmpeg_location"] = ffmpeg_path()
+            if fmt_key == "audio_mp3":
+                opts["postprocessors"] = [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3"}]
+
+        with YoutubeDL(opts) as y:
+            # extract_info raises on many failures; hook updates progress
+            y.extract_info(url, download=True)
+
+        files = glob.glob(os.path.join(job.tmp, "*"))
+        # pick the largest file inside job.tmp (should be the output we produced)
+        job.file = max(files, key=os.path.getsize) if files else None
+        job.status = "finished" if job.file else "error"
+        if not job.file and job.status == "error":
+            job.error = job.error or "No output file produced"
     except Exception as e:
-        job.status="error";job.error=str(e)[:200]
+        job.status = "error"
+        job.error = str(e)[:400]
 
 @app.post("/start")
 def start():
-    d=request.json;job=Job()
-    threading.Thread(target=run_download,args=(job,d["url"],d["format_choice"],d.get("filename")),daemon=True).start()
-    return jsonify({"job_id":job.id})
+    d = request.json or {}
+    job = Job()
+    threading.Thread(target=run_download, args=(job, d.get("url", ""), d.get("format_choice", "mp4_best"), d.get("filename")), daemon=True).start()
+    return jsonify({"job_id": job.id})
 
 @app.post("/info")
 def info():
-    d=request.json;url=d.get("url")
+    d = request.json or {}
+    url = d.get("url", "")
     try:
-        with YoutubeDL({"skip_download":True,"quiet":True,"noplaylist":True,"cookiefile":"cookies.txt"}) as y:
-            info=y.extract_info(url,download=False)
-        title=info.get("title","");channel=info.get("uploader")or info.get("channel","");thumb=info.get("thumbnail");dur=info.get("duration")or 0
-        return jsonify({"title":title,"thumbnail":thumb,"channel":channel,"duration_str":f"{dur//60}:{dur%60:02d}"})
-    except:return jsonify({"error":"Preview failed"}),400
+        with YoutubeDL({"skip_download": True, "quiet": True, "noplaylist": True, "cookiefile": "cookies.txt"}) as y:
+            info = y.extract_info(url, download=False)
+        title = info.get("title", "")
+        channel = info.get("uploader") or info.get("channel", "")
+        thumb = info.get("thumbnail")
+        dur = info.get("duration") or 0
+        return jsonify({"title": title, "thumbnail": thumb, "channel": channel, "duration_str": f"{dur//60}:{dur%60:02d}"})
+    except Exception as e:
+        return jsonify({"error": "Preview failed", "detail": str(e)[:400]}), 400
 
 @app.get("/progress/<id>")
 def progress(id):
-    j=JOBS.get(id)
-    if not j:abort(404)
-    # compute speed_mbps (megabits/sec, 1 decimal) and eta_seconds on server
+    j = JOBS.get(id)
+    if not j:
+        abort(404)
+    # compute server-side ETA if possible and speed_mbps
     speed_b = getattr(j, "speed_bytes", 0) or 0
     speed_mbps = round((speed_b * 8) / 1_000_000, 1) if speed_b and speed_b > 0 else 0.0
     eta_seconds = None
     downloaded = getattr(j, "downloaded_bytes", 0) or 0
     total = getattr(j, "total_bytes", 0) or 0
     if total > 0 and downloaded > 0 and speed_b and speed_b > 0 and downloaded < total:
-        eta_seconds = int((total - downloaded) / speed_b)
-    # return fields used by frontend (kept same plus two new fields)
+        try:
+            eta_seconds = int((total - downloaded) / speed_b)
+        except Exception:
+            eta_seconds = None
     return jsonify({
         "percent": j.percent,
         "status": j.status,
@@ -442,33 +500,53 @@ def progress(id):
 
 @app.get("/fetch/<id>")
 def fetch(id):
-    j=JOBS.get(id)
-    if not j:abort(404)
-    if not j.file or not os.path.exists(j.file):return jsonify({"error":"File not ready"}),400
-    j.downloaded_at=time.time();j.status="downloaded"
-    return send_file(j.file,as_attachment=True,download_name=os.path.basename(j.file))
+    j = JOBS.get(id)
+    if not j:
+        abort(404)
+    if not j.file or not os.path.exists(j.file):
+        return jsonify({"error": "File not ready"}), 400
+    j.downloaded_at = time.time()
+    j.status = "downloaded"
+    return send_file(j.file, as_attachment=True, download_name=os.path.basename(j.file))
 
-CLEANUP_INTERVAL=60*10
-JOB_TTL_SECONDS=60*60
-DOWNLOAD_KEEP_SECONDS=60
+@app.get("/env")
+def env():
+    return jsonify({"ffmpeg": HAS_FFMPEG})
+
+# Cleanup worker (auto-clean)
+CLEANUP_INTERVAL = 60 * 10
+JOB_TTL_SECONDS = 60 * 60      # remove finished/error jobs older than 1 hour
+DOWNLOAD_KEEP_SECONDS = 60     # after user downloads file, remove from server after 60s
 
 def cleanup_worker():
     while True:
         try:
-            now=time.time()
-            remove=[]
-            for jid,job in list(JOBS.items()):
-                if job.status in("finished","error") and now-job.created_at>JOB_TTL_SECONDS:remove.append(jid)
-                if job.status=="downloaded" and job.downloaded_at and now-job.downloaded_at>DOWNLOAD_KEEP_SECONDS:remove.append(jid)
+            now = time.time()
+            remove = []
+            for jid, job in list(JOBS.items()):
+                # jobs that finished or errored and are older than TTL
+                if job.status in ("finished", "error") and (now - job.created_at > JOB_TTL_SECONDS):
+                    remove.append(jid)
+                # jobs that user downloaded; keep short time then remove
+                if job.status == "downloaded" and job.downloaded_at and (now - job.downloaded_at > DOWNLOAD_KEEP_SECONDS):
+                    remove.append(jid)
             for rid in remove:
-                j=JOBS.pop(rid,None)
-                if j:shutil.rmtree(j.tmp,ignore_errors=True)
-        except Exception as e:print("[cleanup]",e)
+                j = JOBS.pop(rid, None)
+                if j:
+                    try:
+                        shutil.rmtree(j.tmp, ignore_errors=True)
+                    except Exception:
+                        pass
+        except Exception as e:
+            # don't crash the worker; log to stdout for server logs
+            print("[cleanup]", e)
         time.sleep(CLEANUP_INTERVAL)
-threading.Thread(target=cleanup_worker,daemon=True).start()
+
+threading.Thread(target=cleanup_worker, daemon=True).start()
 
 @app.get("/")
-def home():return render_template_string(HTML)
+def home():
+    return render_template_string(HTML)
 
-if __name__=="__main__":
-    app.run(host="0.0.0.0",port=int(os.environ.get("PORT",5000)))
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
