@@ -42,6 +42,8 @@ HTML = r"""
   --grad2:#06b6d4;
   --accent:linear-gradient(90deg,var(--grad1),var(--grad2));
   --radius:16px;
+  --pill-bg: rgba(255,255,255,0.03);
+  --pill-border: rgba(255,255,255,0.06);
 }
 *{box-sizing:border-box;}
 body{
@@ -130,7 +132,7 @@ button[disabled]{opacity:.6;cursor:not-allowed;}
   overflow:hidden;position:relative;
 }
 .bar{
-  width:0%;Height:100%;
+  width:0%;height:100%;
   background:var(--accent);
   transition:width .3s ease;
   box-shadow:0 0 20px rgba(6,182,212,.4);
@@ -152,6 +154,21 @@ button[disabled]{opacity:.6;cursor:not-allowed;}
 }
 @keyframes sheen{100%{transform:translateX(120%)}}
 
+/* Status row: message left, ETA pill right */
+.status-row{
+  display:flex;align-items:center;justify-content:space-between;margin-top:10px;gap:12px;
+}
+.status-left{color:var(--muted);font-size:13px;display:flex;align-items:center;gap:8px;}
+.eta-pill{
+  display:inline-flex;align-items:center;gap:10px;padding:8px 12px;border-radius:999px;
+  background:var(--pill-bg);border:1px solid var(--pill-border);font-weight:700;font-size:13px;color:#fff;
+  min-width:90px;justify-content:center;
+  box-shadow:0 6px 18px rgba(6,182,212,0.06);
+}
+/* make ETA number monospaced-ish */
+.eta-pill .label{opacity:0.85;color:var(--muted);font-weight:600;font-size:12px;margin-right:6px}
+.eta-pill .value{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Roboto Mono,monospace;font-weight:800}
+
 /* Preview */
 .preview{
   display:none;margin-top:10px;padding:10px;
@@ -165,6 +182,11 @@ button[disabled]{opacity:.6;cursor:not-allowed;}
 .meta .sub{color:var(--muted);font-size:13px;margin-top:4px;}
 
 footer{margin-top:20px;text-align:center;color:var(--muted);font-size:12px;}
+/* responsive tweaks */
+@media(max-width:520px){
+  .eta-pill{min-width:72px;padding:6px 10px;font-size:12px}
+  .brand-title h1{font-size:18px}
+}
 </style>
 </head>
 <body>
@@ -207,10 +229,12 @@ footer{margin-top:20px;text-align:center;color:var(--muted);font-size:12px;}
   </form>
 
   <div class="progress"><div id="bar" class="bar"></div><div id="pct" class="pct">0%</div></div>
-  <!-- ETA added under progress bar -->
-  <div id="eta" style="margin-top:8px;" class="small">ETA: --</div>
 
-  <p id="msg" style="margin-top:8px;" class="small"></p>
+  <!-- status row: left = message, right = ETA pill -->
+  <div class="status-row" aria-live="polite">
+    <div id="msg" class="status-left">—</div>
+    <div id="eta" class="eta-pill"><span class="label">ETA:</span><span class="value">--</span></div>
+  </div>
 </main>
 
 <footer>© 2025 Hyper Downloader — Auto cleanup & responsive UI</footer>
@@ -218,21 +242,23 @@ footer{margin-top:20px;text-align:center;color:var(--muted);font-size:12px;}
 
 <script>
 let job=null;
-const bar=document.getElementById("bar"),pct=document.getElementById("pct"),msg=document.getElementById("msg");
+const bar=document.getElementById("bar"),pct=document.getElementById("pct");
+const msg=document.getElementById("msg");
 const etaEl=document.getElementById("eta");
+const etaVal=document.querySelector("#eta .value");
 const urlIn=document.getElementById("url"),thumb=document.getElementById("thumb"),preview=document.getElementById("preview"),pTitle=document.getElementById("pTitle"),pSub=document.getElementById("pSub");
 
 document.getElementById("frm").addEventListener("submit",async(e)=>{
   e.preventDefault();
   msg.textContent="⏳ Starting...";
-  etaEl.textContent="ETA: --";
+  etaVal.textContent="--";
   const url=urlIn.value.trim(),fmt=document.getElementById("format").value,name=document.getElementById("name").value.trim();
   try{
     const r=await fetch("/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url,format_choice:fmt,filename:name})});
     const j=await r.json();
     if(!r.ok)throw new Error(j.error||"Failed to start");
     job=j.job_id;poll();
-  }catch(err){msg.textContent="❌ "+err.message;}
+  }catch(err){msg.textContent="❌ "+err.message; etaVal.textContent="--";}
 });
 
 urlIn.addEventListener("input",()=>{
@@ -253,7 +279,7 @@ async function fetchInfo(url){
 }
 
 function formatSeconds(s){
-  if(!isFinite(s) || s<0) return "--";
+  if(s===null || s===undefined || !isFinite(s) || s<0) return "--";
   s=Math.round(s);
   const h=Math.floor(s/3600); const m=Math.floor((s%3600)/60); const sec=s%60;
   if(h>0) return `${h}h ${m}m ${sec}s`;
@@ -261,28 +287,32 @@ function formatSeconds(s){
   return `${sec}s`;
 }
 
+function formatMbps(speed_b){
+  if(!speed_b || speed_b <= 0) return "0.0 Mbps";
+  const mbps = (speed_b * 8) / 1_000_000;
+  // show 1 decimal, but cap to 2 digits before decimal if very large (user asked earlier)
+  return mbps.toFixed(1) + " Mbps";
+}
+
 async function poll(){
   if(!job)return;
   try{
     const r=await fetch("/progress/"+job);
-    if(r.status===404){msg.textContent="Job expired.";job=null;return;}
+    if(r.status===404){msg.textContent="Job expired.";etaVal.textContent="--";job=null;return;}
     const p=await r.json();
     const pctv=Math.max(0,Math.min(100,p.percent||0));
     bar.style.width=pctv+"%";pct.textContent=pctv+"%";
 
-    // if server sends speed_mbps and eta_seconds (we added), use them if present, otherwise compute client-side fallback
-    if(typeof p.speed_mbps !== "undefined"){
-      // speed label: p.speed_mbps is numeric with 1 decimal
-      // show in msg line for simplicity (you can change UI as you like)
-      // not changing outer UI structure—only display ETA below
-    }
+    // show main message text
+    if(p.status==="finished"){msg.textContent="✅ Preparing file...";}
+    else if(p.status==="error"){msg.textContent="❌ "+(p.error||"Download failed");}
+    else msg.textContent = p.status==="downloaded" ? "✅ Download complete (fetching file)..." : "Downloading…";
 
-    // ETA: use server-provided rough ETA if present
+    // ETA display: prefer server-provided eta_seconds; if null, fallback to client calc
+    let etaText="--";
     if(typeof p.eta_seconds !== "undefined" && p.eta_seconds !== null){
-      etaEl.textContent = "ETA: " + formatSeconds(p.eta_seconds);
+      etaText = formatSeconds(p.eta_seconds);
     } else {
-      // fallback client-side calc using available bytes/s
-      let etaText="--";
       try{
         const downloaded = p.downloaded_bytes || 0;
         const total = p.total_bytes || 0;
@@ -290,23 +320,20 @@ async function poll(){
         if(total>0 && downloaded>0 && speed>0 && downloaded < total){
           const remain = (total - downloaded)/speed;
           etaText = formatSeconds(remain);
-        } else if(pctv>0 && speed>0){
-          if(downloaded>0){
-            const total_est = downloaded * 100 / pctv;
-            const remain = (total_est - downloaded)/speed;
-            etaText = formatSeconds(remain);
-          } else {
-            etaText="--";
-          }
+        } else {
+          etaText="--";
         }
       }catch(e){etaText="--";}
-      etaEl.textContent = "ETA: " + (etaText==="--" ? "--" : etaText);
     }
+    etaVal.textContent = etaText;
 
-    if(p.status==="finished"){msg.textContent="✅ Preparing file...";window.location="/fetch/"+job;job=null;return;}
-    if(p.status==="error"){msg.textContent="❌ "+p.error;job=null;return;}
+    // also show (in tooltip on ETA) speed in Mbps for convenience (not altering layout)
+    etaEl.title = "Speed: " + formatMbps(p.speed_bytes || 0);
+
+    if(p.status==="finished"){ window.location="/fetch/"+job; job=null; return; }
+    if(p.status==="error"){ job=null; return; }
     setTimeout(poll,800);
-  }catch(e){msg.textContent="Network error.";job=null;}
+  }catch(e){msg.textContent="Network error.";etaVal.textContent="--";job=null;}
 }
 </script>
 </body>
