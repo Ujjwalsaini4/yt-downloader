@@ -270,28 +270,38 @@ async function poll(){
     const pctv=Math.max(0,Math.min(100,p.percent||0));
     bar.style.width=pctv+"%";pct.textContent=pctv+"%";
 
-    // ETA calculation using returned downloaded_bytes, total_bytes and speed_bytes
-    let etaText="--";
-    try{
-      const downloaded = p.downloaded_bytes || 0;
-      const total = p.total_bytes || 0;
-      const speed = p.speed_bytes || 0;
-      if(total>0 && downloaded>0 && speed>0 && downloaded < total){
-        const remain = (total - downloaded)/speed;
-        etaText = formatSeconds(remain);
-      } else if(pctv>0 && speed>0){
-        // fallback: estimate total by percent if total not provided
-        // total_est = downloaded_est * 100 / percent -> need downloaded (if not present can't fallback)
-        if(downloaded>0){
-          const total_est = downloaded * 100 / pctv;
-          const remain = (total_est - downloaded)/speed;
+    // if server sends speed_mbps and eta_seconds (we added), use them if present, otherwise compute client-side fallback
+    if(typeof p.speed_mbps !== "undefined"){
+      // speed label: p.speed_mbps is numeric with 1 decimal
+      // show in msg line for simplicity (you can change UI as you like)
+      // not changing outer UI structure—only display ETA below
+    }
+
+    // ETA: use server-provided rough ETA if present
+    if(typeof p.eta_seconds !== "undefined" && p.eta_seconds !== null){
+      etaEl.textContent = "ETA: " + formatSeconds(p.eta_seconds);
+    } else {
+      // fallback client-side calc using available bytes/s
+      let etaText="--";
+      try{
+        const downloaded = p.downloaded_bytes || 0;
+        const total = p.total_bytes || 0;
+        const speed = p.speed_bytes || 0;
+        if(total>0 && downloaded>0 && speed>0 && downloaded < total){
+          const remain = (total - downloaded)/speed;
           etaText = formatSeconds(remain);
-        } else {
-          etaText="--";
+        } else if(pctv>0 && speed>0){
+          if(downloaded>0){
+            const total_est = downloaded * 100 / pctv;
+            const remain = (total_est - downloaded)/speed;
+            etaText = formatSeconds(remain);
+          } else {
+            etaText="--";
+          }
         }
-      }
-    }catch(e){etaText="--";}
-    etaEl.textContent = "ETA: " + (etaText==="--" ? "--" : etaText);
+      }catch(e){etaText="--";}
+      etaEl.textContent = "ETA: " + (etaText==="--" ? "--" : etaText);
+    }
 
     if(p.status==="finished"){msg.textContent="✅ Preparing file...";window.location="/fetch/"+job;job=null;return;}
     if(p.status==="error"){msg.textContent="❌ "+p.error;job=null;return;}
@@ -344,8 +354,8 @@ def run_download(job,url,fmt_key,filename):
                 total=d.get("total_bytes")or d.get("total_bytes_estimate")or 0
                 downloaded=d.get("downloaded_bytes",0) or 0
                 # update job fields for frontend ETA
-                job.total_bytes = total
-                job.downloaded_bytes = downloaded
+                job.total_bytes = int(total or 0)
+                job.downloaded_bytes = int(downloaded or 0)
                 job.percent = int((downloaded*100)/total) if total else job.percent
                 job.speed_bytes = d.get("speed")or 0
             elif d.get("status")=="finished":
@@ -383,9 +393,25 @@ def info():
 def progress(id):
     j=JOBS.get(id)
     if not j:abort(404)
-    # include downloaded_bytes and total_bytes to allow frontend ETA calc
-    return jsonify({"percent":j.percent,"status":j.status,"error":j.error,"speed_bytes":j.speed_bytes,
-                    "downloaded_bytes":getattr(j,"downloaded_bytes",0),"total_bytes":getattr(j,"total_bytes",0)})
+    # compute speed_mbps (megabits/sec, 1 decimal) and eta_seconds on server
+    speed_b = getattr(j, "speed_bytes", 0) or 0
+    speed_mbps = round((speed_b * 8) / 1_000_000, 1) if speed_b and speed_b > 0 else 0.0
+    eta_seconds = None
+    downloaded = getattr(j, "downloaded_bytes", 0) or 0
+    total = getattr(j, "total_bytes", 0) or 0
+    if total > 0 and downloaded > 0 and speed_b and speed_b > 0 and downloaded < total:
+        eta_seconds = int((total - downloaded) / speed_b)
+    # return fields used by frontend (kept same plus two new fields)
+    return jsonify({
+        "percent": j.percent,
+        "status": j.status,
+        "error": j.error,
+        "speed_bytes": speed_b,
+        "speed_mbps": speed_mbps,
+        "downloaded_bytes": downloaded,
+        "total_bytes": total,
+        "eta_seconds": eta_seconds
+    })
 
 @app.get("/fetch/<id>")
 def fetch(id):
