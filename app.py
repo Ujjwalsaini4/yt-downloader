@@ -24,7 +24,7 @@ def ffmpeg_path():
     return which("ffmpeg") or "/usr/bin/ffmpeg"
 HAS_FFMPEG = os.path.exists(ffmpeg_path())
 
-# ---------- HTML (kept same as your UI; no layout changes) ----------
+# ---------- HTML (kept same except format options) ----------
 HTML = r"""
 <!doctype html>
 <html lang="en">
@@ -220,7 +220,8 @@ footer{margin-top:20px;text-align:center;color:var(--muted);font-size:12px;}
         <select id="format">
           <option value="mp4_720" data-need-ffmpeg="1">720p MP4</option>
           <option value="mp4_1080" data-need-ffmpeg="1">1080p MP4</option>
-          <option value="mp4_best">4K MP4</option>
+          <option value="mp4_1440" data-need-ffmpeg="1">1440p (2K) MP4</option>
+          <option value="mp4_2160" data-need-ffmpeg="1">2160p (4K) MP4</option>
           <option value="audio_mp3" data-need-ffmpeg="1">MP3 Only</option>
         </select>
       </div>
@@ -361,21 +362,22 @@ YTDLP_URL_RE = re.compile(r"^https?://", re.I)
 def format_map_for_env():
     """
     Stricter selectors to prefer correct resolution streams.
-    When ffmpeg is available we select video+audio (adaptive) so merging works and sizes
-    differ per resolution. When ffmpeg is not available we pull single-file mp4 fallbacks.
+    We added explicit keys for 720/1080/1440/2160.
     """
     if HAS_FFMPEG:
         return {
-            "mp4_720": "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720]",
+            "mp4_720":  "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720]",
             "mp4_1080": "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080]",
-            "mp4_best": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best",
+            "mp4_1440": "bestvideo[height<=1440][ext=mp4]+bestaudio[ext=m4a]/best[height<=1440]",
+            "mp4_2160": "bestvideo[height<=2160][ext=mp4]+bestaudio[ext=m4a]/best[height<=2160]",
             "audio_mp3": "bestaudio"
         }
     else:
         return {
-            "mp4_720": "best[height<=720][ext=mp4]/best[height<=720]",
+            "mp4_720":  "best[height<=720][ext=mp4]/best[height<=720]",
             "mp4_1080": "best[height<=1080][ext=mp4]/best[height<=1080]",
-            "mp4_best": "best[ext=mp4]/best",
+            "mp4_1440": "best[height<=1440][ext=mp4]/best[height<=1440]",
+            "mp4_2160": "best[height<=2160][ext=mp4]/best[height<=2160]",
             "audio_mp3": "bestaudio"
         }
 
@@ -407,11 +409,9 @@ def run_download(job, url, fmt_key, filename):
                 elif st == "finished":
                     job.percent = 100
             except Exception:
-                # keep hook resilient
                 pass
 
         base = (filename.strip() if filename else "%(title)s").rstrip(".")
-        # include unique job id in outtmpl to avoid collisions and ensure we pick correct file
         safe_base = f"{job.id}__{base}"
         out = os.path.join(job.tmp, safe_base + ".%(ext)s")
 
@@ -422,13 +422,11 @@ def run_download(job, url, fmt_key, filename):
             "quiet": True,
             "no_warnings": True,
             "noplaylist": True,
-            # small resiliency tweaks
             "retries": 3,
             "socket_timeout": 30,
             "cookiefile": "cookies.txt",
         }
 
-        # only set merge_output_format and ffmpeg location if ffmpeg exists
         if HAS_FFMPEG:
             opts["merge_output_format"] = "mp4"
             opts["ffmpeg_location"] = ffmpeg_path()
@@ -436,11 +434,9 @@ def run_download(job, url, fmt_key, filename):
                 opts["postprocessors"] = [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3"}]
 
         with YoutubeDL(opts) as y:
-            # extract_info raises on many failures; hook updates progress
             y.extract_info(url, download=True)
 
         files = glob.glob(os.path.join(job.tmp, "*"))
-        # pick the largest file inside job.tmp (should be the output we produced)
         job.file = max(files, key=os.path.getsize) if files else None
         job.status = "finished" if job.file else "error"
         if not job.file and job.status == "error":
@@ -453,7 +449,7 @@ def run_download(job, url, fmt_key, filename):
 def start():
     d = request.json or {}
     job = Job()
-    threading.Thread(target=run_download, args=(job, d.get("url", ""), d.get("format_choice", "mp4_best"), d.get("filename")), daemon=True).start()
+    threading.Thread(target=run_download, args=(job, d.get("url", ""), d.get("format_choice", "mp4_2160"), d.get("filename")), daemon=True).start()
     return jsonify({"job_id": job.id})
 
 @app.post("/info")
@@ -476,7 +472,6 @@ def progress(id):
     j = JOBS.get(id)
     if not j:
         abort(404)
-    # compute server-side ETA if possible and speed_mbps
     speed_b = getattr(j, "speed_bytes", 0) or 0
     speed_mbps = round((speed_b * 8) / 1_000_000, 1) if speed_b and speed_b > 0 else 0.0
     eta_seconds = None
@@ -524,10 +519,8 @@ def cleanup_worker():
             now = time.time()
             remove = []
             for jid, job in list(JOBS.items()):
-                # jobs that finished or errored and are older than TTL
                 if job.status in ("finished", "error") and (now - job.created_at > JOB_TTL_SECONDS):
                     remove.append(jid)
-                # jobs that user downloaded; keep short time then remove
                 if job.status == "downloaded" and job.downloaded_at and (now - job.downloaded_at > DOWNLOAD_KEEP_SECONDS):
                     remove.append(jid)
             for rid in remove:
@@ -538,7 +531,6 @@ def cleanup_worker():
                     except Exception:
                         pass
         except Exception as e:
-            # don't crash the worker; log to stdout for server logs
             print("[cleanup]", e)
         time.sleep(CLEANUP_INTERVAL)
 
