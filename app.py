@@ -24,7 +24,7 @@ def ffmpeg_path():
     return which("ffmpeg") or "/usr/bin/ffmpeg"
 HAS_FFMPEG = os.path.exists(ffmpeg_path())
 
-# ---------- HTML (kept same except format options) ----------
+# ---------- HTML (UI kept as requested) ----------
 HTML = r"""
 <!doctype html>
 <html lang="en">
@@ -220,8 +220,8 @@ footer{margin-top:20px;text-align:center;color:var(--muted);font-size:12px;}
         <select id="format">
           <option value="mp4_720" data-need-ffmpeg="1">720p MP4</option>
           <option value="mp4_1080" data-need-ffmpeg="1">1080p MP4</option>
-          <option value="mp4_1440" data-need-ffmpeg="1">1440p (2K) MP4</option>
-          <option value="mp4_2160" data-need-ffmpeg="1">2160p (4K) MP4</option>
+          <option value="mp4_1440" data-need-ffmpeg="1">1440p (2K) MKV</option>
+          <option value="mp4_2160" data-need-ffmpeg="1">2160p (4K) MKV</option>
           <option value="audio_mp3" data-need-ffmpeg="1">MP3 Only</option>
         </select>
       </div>
@@ -308,7 +308,7 @@ async function poll(){
     else if(p.status==="error"){msg.textContent="❌ "+(p.error||"Download failed");}
     else msg.textContent = p.status==="downloaded" ? "✅ Download complete (fetching file)..." : "Downloading…";
 
-    // prefer server-provided eta_seconds
+    // ETA preference: server-provided -> client-calc fallback
     let etaText="--";
     if(typeof p.eta_seconds !== "undefined" && p.eta_seconds !== null){
       etaText = formatSeconds(p.eta_seconds);
@@ -361,18 +361,19 @@ YTDLP_URL_RE = re.compile(r"^https?://", re.I)
 
 def format_map_for_env():
     """
-    Stricter selectors to prefer correct resolution streams.
-    We added explicit keys for 720/1080/1440/2160.
+    Resolution-focused format selectors.
+    For high-res >1080 we won't force MP4; merging will use MKV (remux) to preserve original codecs.
     """
     if HAS_FFMPEG:
         return {
-            "mp4_720":  "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720]",
-            "mp4_1080": "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080]",
-            "mp4_1440": "bestvideo[height<=1440][ext=mp4]+bestaudio[ext=m4a]/best[height<=1440]",
-            "mp4_2160": "bestvideo[height<=2160][ext=mp4]+bestaudio[ext=m4a]/best[height<=2160]",
+            "mp4_720":  "bestvideo[height<=720]+bestaudio/best",
+            "mp4_1080": "bestvideo[height<=1080]+bestaudio/best",
+            "mp4_1440": "bestvideo[height<=1440]+bestaudio/best",
+            "mp4_2160": "bestvideo[height<=2160]+bestaudio/best",
             "audio_mp3": "bestaudio"
         }
     else:
+        # Without ffmpeg, we try to pick single-file mp4/webm where possible
         return {
             "mp4_720":  "best[height<=720][ext=mp4]/best[height<=720]",
             "mp4_1080": "best[height<=1080][ext=mp4]/best[height<=1080]",
@@ -391,7 +392,7 @@ def run_download(job, url, fmt_key, filename):
         fmt = format_map_for_env().get(fmt_key)
         if fmt is None:
             job.status = "error"
-            job.error = "Format not supported on this server"
+            job.error = "Format not supported"
             return
 
         def hook(d):
@@ -412,6 +413,7 @@ def run_download(job, url, fmt_key, filename):
                 pass
 
         base = (filename.strip() if filename else "%(title)s").rstrip(".")
+        # include job id in name to avoid collisions
         safe_base = f"{job.id}__{base}"
         out = os.path.join(job.tmp, safe_base + ".%(ext)s")
 
@@ -428,7 +430,12 @@ def run_download(job, url, fmt_key, filename):
         }
 
         if HAS_FFMPEG:
-            opts["merge_output_format"] = "mp4"
+            # Use MKV for high-res remux to preserve VP9/AV1 without re-encode
+            if fmt_key in ("mp4_1440", "mp4_2160"):
+                opts["merge_output_format"] = "mkv"
+            else:
+                # keep mp4 for <=1080 (or you can choose mkv too)
+                opts["merge_output_format"] = "mp4"
             opts["ffmpeg_location"] = ffmpeg_path()
             if fmt_key == "audio_mp3":
                 opts["postprocessors"] = [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3"}]
