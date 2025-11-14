@@ -9,7 +9,7 @@ import threading
 import uuid
 import re
 import mimetypes
-from flask import Flask, request, jsonify, render_template_string, abort, send_file, Response
+from flask import Flask, request, jsonify, render_template_string, abort, send_file
 from shutil import which
 from yt_dlp import YoutubeDL
 
@@ -26,7 +26,7 @@ def ffmpeg_path():
 HAS_FFMPEG = os.path.exists(ffmpeg_path())
 
 # ---------- HTML (UI kept as requested) ----------
-HTML = """
+HTML = r"""
 <!doctype html>
 <html lang="en">
 <head>
@@ -409,8 +409,8 @@ def run_download(job, url, fmt_key, filename):
             return
 
         fmt_map = format_map_for_env()
-        fmt = fmt_map.get(fmt_key)
-        if fmt is None:
+        requested_fmt = fmt_map.get(fmt_key)
+        if requested_fmt is None:
             job.status = "error"
             job.error = "Format not supported"
             return
@@ -436,19 +436,16 @@ def run_download(job, url, fmt_key, filename):
             except Exception:
                 pass
 
-        # Prepare base filename:
+        # Prepare base filename and sanitize
         base = (filename.strip() if filename else "%(title)s").rstrip(".")
-        # sanitize: remove characters that are unsafe in filenames on many filesystems
-        safe = re.sub(r'[\\/*?:"<>|]', "_", base)
-        safe = safe.strip()
+        safe = re.sub(r'[\\/*?:"<>|]', "_", base).strip()
         if not safe:
             safe = "%(title)s"
-
-        # Output template WITHOUT job.id prefix (so returned file uses original title / user filename)
         out = os.path.join(job.tmp, safe + ".%(ext)s")
 
-        opts = {
-            "format": fmt,
+        # Build initial options (we may modify 'format' and postprocessors on retries)
+        base_opts = {
+            "format": requested_fmt,
             "outtmpl": out,
             "progress_hooks": [hook],
             "quiet": True,
@@ -459,10 +456,51 @@ def run_download(job, url, fmt_key, filename):
             "cookiefile": "cookies.txt",
         }
 
-        # Audio-specific handling: add postprocessor only if ffmpeg is present
-        if fmt_key.startswith("audio_mp3_"):
-            if HAS_FFMPEG:
-                kbps = fmt_key.split("_")[-1]
+        # Helper to run yt-dlp once with given opts, returns True on success
+        def try_run(opts):
+            try:
+                with YoutubeDL(opts) as y:
+                    y.extract_info(url, download=True)
+                return True, None
+            except Exception as e:
+                return False, e
+
+        # For audio->mp3 choices we may want ffmpeg postprocessor
+        is_audio_mp3 = fmt_key.startswith("audio_mp3_")
+        tried_attempts = []
+        # List of candidate format selectors (in order). We'll try each until one works.
+        candidates = []
+
+        # 1) try exactly requested selector first
+        candidates.append(requested_fmt)
+
+        # 2) if requested was a specific selector, try adding fallback "/best"
+        candidates.append(requested_fmt + "/best")
+
+        # 3) If it's audio request, prefer 'bestaudio' then 'bestaudio/best'
+        if is_audio_mp3:
+            candidates.extend(["bestaudio", "bestaudio/best", "best"])
+
+        # 4) For video selectors that might restrict ext/height, try 'best' as last resort
+        candidates.append("best")
+
+        # Make unique while preserving order
+        seen = set(); filtered = []
+        for c in candidates:
+            if c and c not in seen:
+                filtered.append(c); seen.add(c)
+        candidates = filtered
+
+        success = False
+        last_exc = None
+
+        for fmt_try in candidates:
+            opts = dict(base_opts)  # copy
+            opts["format"] = fmt_try
+
+            # If audio->mp3 and ffmpeg exists and we are trying to convert, set postprocessor
+            if is_audio_mp3 and HAS_FFMPEG:
+                kbps = fmt_key.split("_")[-1]  # last part e.g. "192"
                 opts["postprocessors"] = [{
                     "key": "FFmpegExtractAudio",
                     "preferredcodec": "mp3",
@@ -470,25 +508,47 @@ def run_download(job, url, fmt_key, filename):
                 }]
                 opts["ffmpeg_location"] = ffmpeg_path()
             else:
-                pass
+                # ensure we don't leave stale postprocessors if any
+                opts.pop("postprocessors", None)
 
-        if HAS_FFMPEG and fmt_key.startswith("mp4_"):
-            opts["ffmpeg_location"] = ffmpeg_path()
-            opts["merge_output_format"] = "mp4"
+            # If merging video+audio desired and ffmpeg available, set merge_output_format for mp4 keys
+            if HAS_FFMPEG and fmt_key.startswith("mp4_"):
+                opts["ffmpeg_location"] = ffmpeg_path()
+                opts["merge_output_format"] = "mp4"
 
-        # Execute download
-        with YoutubeDL(opts) as y:
-            y.extract_info(url, download=True)
+            tried_attempts.append(fmt_try)
+            ok, exc = try_run(opts)
+            if ok:
+                success = True
+                break
+            else:
+                last_exc = exc
 
+        # After attempts, set job.file based on produced files (if any)
         files = glob.glob(os.path.join(job.tmp, "*"))
         job.file = max(files, key=os.path.getsize) if files else None
-        if job.file:
+        if success and job.file:
             job.status = "finished"
             job.downloaded_at = time.time()
             job.percent = 100
+            return
         else:
+            # Construct helpful error message
+            if last_exc:
+                msg = str(last_exc)
+                if "Requested format is not available" in msg or "format not available" in msg.lower():
+                    hint = ("Requested format not available on that video. "
+                            "Tried: " + ", ".join(tried_attempts) + ". "
+                            "Server fell back to available streams (bestaudio/best). "
+                            "If you need MP3 conversion, install ffmpeg on the server.")
+                    job.error = hint
+                else:
+                    job.error = (msg[:400] + " — tried: " + ", ".join(tried_attempts))
+            else:
+                job.error = "No output file produced; tried: " + ", ".join(tried_attempts)
             job.status = "error"
-            job.error = job.error or "No output file produced"
+            return
+
     except Exception as e:
         job.status = "error"
         job.error = str(e)[:400]
@@ -552,12 +612,8 @@ def fetch_file(id):
     if not j.file or not os.path.exists(j.file):
         return jsonify({"error": "File not ready"}), 404
 
-    # Use the real filename on disk as download name (sanitized earlier)
     filename_on_disk = os.path.basename(j.file)
-    # optional: if you want to rename before sending (e.g., strip %() templates) you could process here
-    # send file as attachment
     try:
-        # Determine mimetype
         mimetype, _ = mimetypes.guess_type(j.file)
         return send_file(j.file, as_attachment=True, download_name=filename_on_disk, mimetype=mimetype or "application/octet-stream")
     except Exception as e:
@@ -577,5 +633,4 @@ def cleanup(id):
     return jsonify({"status": "ok"})
 
 if __name__ == "__main__":
-    # choose host/port as needed; debug True for development only
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=False)
