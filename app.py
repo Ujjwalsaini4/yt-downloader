@@ -24,6 +24,25 @@ def ffmpeg_path():
     return which("ffmpeg") or "/usr/bin/ffmpeg"
 HAS_FFMPEG = os.path.exists(ffmpeg_path())
 
+# ---------- small helper: sanitize filename ----------
+def sanitize_filename(name: str, maxlen: int = 120) -> str:
+    if not name:
+        return "download"
+    # Replace newlines, excessive whitespace
+    name = re.sub(r"\s+", " ", name).strip()
+    # Remove path separators and undesirable chars, keep unicode word chars, spaces, dots, hyphens, underscores
+    name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "", name)
+    # Replace any remaining weird characters with underscore
+    name = re.sub(r"[^\w\s\.\-_\u0080-\uFFFF]", "_", name)
+    # Trim length
+    if len(name) > maxlen:
+        # keep start and end if too long
+        name = name[:maxlen]
+    # final cleanup: collapse multiple underscores/spaces
+    name = re.sub(r"[_\s]{2,}", " ", name).strip()
+    # fallback
+    return name or "download"
+
 # ---------- HTML (UI kept as requested) ----------
 HTML = r"""
 <!doctype html>
@@ -122,7 +141,7 @@ button:active{transform:scale(.98);}
 button[disabled]{opacity:.6;cursor:not-allowed;}
 
 /* Grid responsive */
-.grid{display:grid;gap:12px;}
+.grid{display:grid;gap:12px;margin: 5px 0px;}
 @media(min-width:700px){.grid{grid-template-columns:2fr 1fr 1.2fr auto;align-items:end;}}
 .full{grid-column:1/-1;}
 
@@ -441,9 +460,10 @@ def run_download(job, url, fmt_key, filename):
             except Exception:
                 pass
 
-        base = (filename.strip() if filename else "%(title)s").rstrip(".")
-        # include job id in name to avoid collisions
-        safe_base = f"{job.id}__{base}"
+        # Use sanitized filename (no job ID in filename)
+        base_candidate = (filename.strip() if filename else "%(title)s").rstrip(".")
+        safe_base = sanitize_filename(base_candidate)
+
         out = os.path.join(job.tmp, safe_base + ".%(ext)s")
 
         opts = {
@@ -461,28 +481,21 @@ def run_download(job, url, fmt_key, filename):
         # Audio-specific handling: add postprocessor only if ffmpeg is present
         if fmt_key.startswith("audio_mp3_"):
             if HAS_FFMPEG:
-                # preferredquality expects a string like "192" (kbps)
                 kbps = fmt_key.split("_")[-1]
-                # Add FFmpegExtractAudio postprocessor to convert to mp3 at requested kbps
                 opts["postprocessors"] = [{
                     "key": "FFmpegExtractAudio",
                     "preferredcodec": "mp3",
-                    "preferredquality": kbps  # yt-dlp uses this as kbps for mp3
+                    "preferredquality": kbps
                 }]
-                # ensure ffmpeg location provided
                 opts["ffmpeg_location"] = ffmpeg_path()
             else:
-                # No ffmpeg: we'll download best audio stream as-is (no conversion)
-                # user will receive the bestaudio in original container/codec
                 pass
 
         # For video merges/remuxing when ffmpeg exists, set merge_output_format to mp4 for <=1080
         if HAS_FFMPEG and fmt_key.startswith("mp4_"):
             opts["ffmpeg_location"] = ffmpeg_path()
-            # For <=1080, prefer mp4 container (remux). If original codecs incompatible, ytdlp may re-encode.
             opts["merge_output_format"] = "mp4"
 
-        # Execute download
         with YoutubeDL(opts) as y:
             y.extract_info(url, download=True)
 
@@ -493,7 +506,6 @@ def run_download(job, url, fmt_key, filename):
             job.error = job.error or "No output file produced"
     except Exception as e:
         job.status = "error"
-        # keep error message reasonably short
         job.error = str(e)[:400]
 
 @app.post("/start")
@@ -553,7 +565,6 @@ def fetch(id):
         return jsonify({"error": "File not ready"}), 400
     j.downloaded_at = time.time()
     j.status = "downloaded"
-    # send as attachment with original filename
     return send_file(j.file, as_attachment=True, download_name=os.path.basename(j.file))
 
 @app.get("/env")
