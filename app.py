@@ -25,24 +25,21 @@ def ffmpeg_path():
     return which("ffmpeg") or "/usr/bin/ffmpeg"
 HAS_FFMPEG = os.path.exists(ffmpeg_path())
 
-# ---------- small helper: sanitize filename ----------
+# ---------- small helper: sanitize filename (used only for user-specified names) ----------
 def sanitize_filename(name: str, maxlen: int = 120) -> str:
     if not name:
         return "download"
-    # Normalize whitespace and trim
     name = re.sub(r"\s+", " ", name).strip()
-    # Remove forbidden characters
+    # Remove only filesystem-forbidden characters
     name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "", name)
-    # Replace other non-safe chars with underscore (allow unicode)
+    # Replace other odd control chars
     name = re.sub(r"[^\w\s\.\-_\u0080-\uFFFF]", "_", name)
-    # Trim length
     if len(name) > maxlen:
         name = name[:maxlen]
-    # Collapse multiple underscores/spaces
     name = re.sub(r"[_\s]{2,}", " ", name).strip()
     return name or "download"
 
-# ---------- Logger wrapper to capture yt-dlp output into job -->
+# ---------- Logger wrapper to capture yt-dlp output into job ----------
 class YTDLPLogger:
     def __init__(self, job):
         self.job = job
@@ -145,7 +142,7 @@ footer{margin-top:20px;text-align:center;color:var(--muted);font-size:12px;}
           </optgroup>
         </select>
       </div>
-      <div><label>Filename</label><input id="name" placeholder="My video"></div>
+      <div><label>Filename (optional)</label><input id="name" placeholder="Leave empty to use original title"></div>
       <div class="full"><button id="goBtn" type="submit">⚡ Start Download</button></div>
     </div>
   </form>
@@ -338,17 +335,23 @@ def run_download(job, url, fmt_key, filename):
             except Exception:
                 pass
 
-        # sanitized filename (no job id)
-        base_candidate = (filename.strip() if filename else "%(title)s").rstrip(".")
-        safe_base = sanitize_filename(base_candidate)
-        out = os.path.join(job.tmp, safe_base + ".%(ext)s")
+        # Decide outtmpl:
+        # - If user provided a filename -> sanitize and use that as a static filename
+        # - Else -> let yt-dlp expand "%(title)s" so resulting file has original title
+        if filename and filename.strip():
+            base_candidate = filename.strip().rstrip(".")
+            safe_base = sanitize_filename(base_candidate)
+            outtmpl = os.path.join(job.tmp, safe_base + ".%(ext)s")
+        else:
+            # Use yt-dlp template so title remains original (yt-dlp will sanitize minimal forbidden chars)
+            outtmpl = os.path.join(job.tmp, "%(title)s.%(ext)s")
 
         # attach logger
         ylog = YTDLPLogger(job)
 
         opts = {
             "format": fmt,
-            "outtmpl": out,
+            "outtmpl": outtmpl,
             "progress_hooks": [hook],
             "quiet": False,
             "no_warnings": False,
