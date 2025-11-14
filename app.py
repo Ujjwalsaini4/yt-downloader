@@ -8,6 +8,7 @@ import glob
 import threading
 import uuid
 import re
+import traceback
 from flask import Flask, request, jsonify, render_template_string, abort, send_file
 from shutil import which
 from yt_dlp import YoutubeDL
@@ -28,22 +29,46 @@ HAS_FFMPEG = os.path.exists(ffmpeg_path())
 def sanitize_filename(name: str, maxlen: int = 120) -> str:
     if not name:
         return "download"
-    # Replace newlines, excessive whitespace
+    # Normalize whitespace and trim
     name = re.sub(r"\s+", " ", name).strip()
-    # Remove path separators and undesirable chars, keep unicode word chars, spaces, dots, hyphens, underscores
+    # Remove forbidden characters
     name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "", name)
-    # Replace any remaining weird characters with underscore
+    # Replace other non-safe chars with underscore (allow unicode)
     name = re.sub(r"[^\w\s\.\-_\u0080-\uFFFF]", "_", name)
     # Trim length
     if len(name) > maxlen:
-        # keep start and end if too long
         name = name[:maxlen]
-    # final cleanup: collapse multiple underscores/spaces
+    # Collapse multiple underscores/spaces
     name = re.sub(r"[_\s]{2,}", " ", name).strip()
-    # fallback
     return name or "download"
 
-# ---------- HTML (UI kept as requested) ----------
+# ---------- Logger wrapper to capture yt-dlp output into job -->
+class YTDLPLogger:
+    def __init__(self, job):
+        self.job = job
+        self.job.log = ""
+    def debug(self, msg):
+        try:
+            self.job.log += "[D] " + str(msg) + "\n"
+        except Exception:
+            pass
+    def info(self, msg):
+        try:
+            self.job.log += "[I] " + str(msg) + "\n"
+        except Exception:
+            pass
+    def warning(self, msg):
+        try:
+            self.job.log += "[W] " + str(msg) + "\n"
+        except Exception:
+            pass
+    def error(self, msg):
+        try:
+            self.job.log += "[E] " + str(msg) + "\n"
+        except Exception:
+            pass
+
+# ---------- HTML (UI) ----------
 HTML = r"""
 <!doctype html>
 <html lang="en">
@@ -54,159 +79,26 @@ HTML = r"""
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
 <style>
-:root{
-  --bg:#050b16;
-  --card:#0a162b;
-  --muted:#a3b5d2;
-  --grad1:#2563eb;
-  --grad2:#06b6d4;
-  --accent:linear-gradient(90deg,var(--grad1),var(--grad2));
-  --radius:16px;
-  --pill-bg: rgba(255,255,255,0.03);
-  --pill-border: rgba(255,255,255,0.06);
-}
+:root{--bg:#050b16;--muted:#a3b5d2;--grad1:#2563eb;--grad2:#06b6d4;--accent:linear-gradient(90deg,var(--grad1),var(--grad2));--radius:16px;}
 *{box-sizing:border-box;}
-body{
-  margin:0;
-  background:radial-gradient(1200px 800px at 30% 20%,rgba(37,99,235,.08),transparent),
-             radial-gradient(1000px 600px at 80% 90%,rgba(6,182,212,.1),transparent),
-             var(--bg);
-  color:#e8f0ff;
-  font-family:'Inter',system-ui,-apple-system,Segoe UI,Roboto,"Noto Sans",sans-serif;
-  -webkit-font-smoothing:antialiased;
-  padding:clamp(12px,2vw,24px);
-}
+body{margin:0;background:radial-gradient(1200px 800px at 30% 20%,rgba(37,99,235,.08),transparent),radial-gradient(1000px 600px at 80% 90%,rgba(6,182,212,.1),transparent),var(--bg);color:#e8f0ff;font-family:'Inter',system-ui,-apple-system,Segoe UI,Roboto,"Noto Sans",sans-serif;padding:clamp(12px,2vw,24px);}
 .wrap{max-width:960px;margin:auto;}
-h1,h2{margin:0;font-weight:800;}
-h2{font-size:22px;}
-.small{font-size:13px;color:var(--muted);}
-
-/* Header */
-header{
-  display:flex;align-items:center;justify-content:space-between;
-  background:rgba(255,255,255,0.02);
-  border:1px solid rgba(255,255,255,0.05);
-  padding:12px 18px;border-radius:var(--radius);
-  box-shadow:0 6px 24px rgba(0,0,0,.3);
-  backdrop-filter:blur(8px) saturate(120%);
-}
+h1,h2{margin:0;font-weight:800;}h2{font-size:22px;}.small{font-size:13px;color:var(--muted);}
+header{display:flex;align-items:center;justify-content:space-between;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.05);padding:12px 18px;border-radius:var(--radius);box-shadow:0 6px 24px rgba(0,0,0,.3);backdrop-filter:blur(8px) saturate(120%);}
 .brand{display:flex;align-items:center;gap:12px;}
-.logo{
-  width:52px;height:52px;border-radius:14px;
-  background:var(--accent);
-  display:grid;place-items:center;
-  color:#fff;font-weight:800;font-size:18px;
-  box-shadow:0 8px 24px rgba(6,182,212,.25);
-}
-/* gentle background pulse for subtle shine */
-@keyframes bgPulse {
-  0% { filter: hue-rotate(0deg) saturate(100%); }
-  50% { filter: hue-rotate(8deg) saturate(110%); }
-  100% { filter: hue-rotate(0deg) saturate(100%); }
-}
-.logo { animation: bgPulse 8s ease-in-out infinite; }
-.brand-title span{
-  background:var(--accent);
-  -webkit-background-clip:text;
-  color:transparent;
-}
-
-/* Card */
-.card{
-  background:rgba(255,255,255,0.02);
-  border:1px solid rgba(255,255,255,0.05);
-  border-radius:var(--radius);
-  box-shadow:0 8px 32px rgba(0,0,0,.4);
-  padding:clamp(16px,3vw,28px);
-  margin-top:20px;
-  transition:transform .2s ease,box-shadow .3s ease;
-}
-.card:hover{transform:translateY(-4px);box-shadow:0 14px 40px rgba(0,0,0,.6);}
-
-/* Form */
-label{display:block;margin-bottom:6px;color:var(--muted);font-size:13px;}
-input,select,button{
-  width:100%;padding:12px 14px;border-radius:12px;
-  border:1px solid rgba(255,255,255,0.07);
-  background-color:#0d1c33;color:#e8f0ff;
-  font-size:15px;
-}
-input::placeholder{color:#5a6b8a;}
-button{
-  background:var(--accent);border:none;font-weight:700;color:#fff;
-  box-shadow:0 8px 28px rgba(6,182,212,.25);
-  cursor:pointer;transition:transform .08s;
-}
-button:active{transform:scale(.98);}
-button[disabled]{opacity:.6;cursor:not-allowed;}
-
-/* Grid responsive */
-.grid{display:grid;gap:12px;margin: 5px 0px;}
-@media(min-width:700px){.grid{grid-template-columns:2fr 1fr 1.2fr auto;align-items:end;}}
-.full{grid-column:1/-1;}
-
-/* Progress bar */
-.progress{
-  margin-top:14px;height:14px;border-radius:999px;
-  background:rgba(255,255,255,0.04);
-  overflow:hidden;position:relative;
-}
-.bar{
-  width:0%;height:100%;
-  background:var(--accent);
-  transition:width .3s ease;
-  box-shadow:0 0 20px rgba(6,182,212,.4);
-}
-.pct{
-  position:absolute;left:50%;top:50%;
-  transform:translate(-50%,-50%);
-  color:#fff;font-weight:700;font-size:13px;
-  text-shadow:0 1px 2px rgba(0,0,0,0.5);
-}
-
-/* sheen overlay on progress */
-.bar::after{
-  content:"";
-  position:absolute;inset:0;
-  background:linear-gradient(90deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02), rgba(255,255,255,0.06));
-  transform:translateX(-40%);opacity:0.6;filter:blur(6px);
-  animation: sheen 2.4s linear infinite;
-}
-@keyframes sheen{100%{transform:translateX(120%)}}
-
-/* Status row: message left, ETA pill right */
-.status-row{
-  display:flex;align-items:center;justify-content:space-between;margin-top:10px;gap:12px;
-}
-.status-left{color:var(--muted);font-size:13px;display:flex;align-items:center;gap:8px;}
-.eta-pill{
-  display:inline-flex;align-items:center;gap:10px;padding:8px 12px;border-radius:999px;
-  background:var(--pill-bg);border:1px solid var(--pill-border);font-weight:700;font-size:13px;color:#fff;
-  min-width:90px;justify-content:center;
-  box-shadow:0 6px 18px rgba(6,182,212,0.06);
-}
-/* make ETA number monospaced-ish */
-.eta-pill .label{opacity:0.85;color:var(--muted);font-weight:600;font-size:12px;margin-right:6px}
-.eta-pill .value{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Roboto Mono,monospace;font-weight:800}
-
-/* Preview */
-.preview{
-  display:none;margin-top:10px;padding:10px;
-  background:rgba(255,255,255,0.02);
-  border-radius:12px;border:1px solid rgba(255,255,255,0.05);
-  box-shadow:inset 0 1px 0 rgba(255,255,255,0.03);
-}
-.preview-row{display:flex;gap:10px;align-items:center;}
+.logo{width:52px;height:52px;border-radius:14px;background:var(--accent);display:grid;place-items:center;color:#fff;font-weight:800;font-size:18px;box-shadow:0 8px 24px rgba(6,182,212,.25);}
+.card{background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.05);border-radius:var(--radius);box-shadow:0 8px 32px rgba(0,0,0,.4);padding:clamp(16px,3vw,28px);margin-top:20px;}
+label{display:block;margin-bottom:6px;color:var(--muted);font-size:13px;}input,select,button{width:100%;padding:12px 14px;border-radius:12px;border:1px solid rgba(255,255,255,0.07);background-color:#0d1c33;color:#e8f0ff;font-size:15px;}
+button{background:var(--accent);border:none;font-weight:700;color:#fff;box-shadow:0 8px 28px rgba(6,182,212,.25);cursor:pointer;}
+.grid{display:grid;gap:12px;}@media(min-width:700px){.grid{grid-template-columns:2fr 1fr 1.2fr auto;align-items:end;}}.full{grid-column:1/-1;}
+.progress{margin-top:14px;height:14px;border-radius:999px;background:rgba(255,255,255,0.04);overflow:hidden;position:relative;}
+.bar{width:0%;height:100%;background:var(--accent);transition:width .3s ease;box-shadow:0 0 20px rgba(6,182,212,.4);} .pct{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);color:#fff;font-weight:700;font-size:13px;}
+.status-row{display:flex;align-items:center;justify-content:space-between;margin-top:10px;gap:12px;}
+.status-left{color:var(--muted);font-size:13px;}
+.eta-pill{display:inline-flex;align-items:center;gap:10px;padding:8px 12px;border-radius:999px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);font-weight:700;font-size:13px;color:#fff;}
+.preview{display:none;margin-top:10px;padding:10px;background:rgba(255,255,255,0.02);border-radius:12px;border:1px solid rgba(255,255,255,0.05);}
 .thumb{width:120px;height:68px;border-radius:8px;object-fit:cover;background:#081627;}
-.meta .title{font-weight:700;font-size:15px;}
-.meta .sub{color:var(--muted);font-size:13px;margin-top:4px;}
-
 footer{margin-top:20px;text-align:center;color:var(--muted);font-size:12px;}
-/* responsive tweaks */
-@media(max-width:520px){
-  .eta-pill{min-width:72px;padding:6px 10px;font-size:12px}
-  .brand-title h1{font-size:18px}
-}
 </style>
 </head>
 <body>
@@ -223,11 +115,11 @@ footer{margin-top:20px;text-align:center;color:var(--muted);font-size:12px;}
   <p class="small">Paste your link, select format, and start. Progress and speed show in real-time.</p>
 
   <div id="preview" class="preview">
-    <div class="preview-row">
+    <div style="display:flex;gap:10px;align-items:center;">
       <img id="thumb" class="thumb" alt="">
-      <div class="meta">
-        <div id="pTitle" class="title"></div>
-        <div id="pSub" class="sub"></div>
+      <div>
+        <div id="pTitle" style="font-weight:700;"></div>
+        <div id="pSub" style="color:var(--muted);font-size:13px;margin-top:4px;"></div>
       </div>
     </div>
   </div>
@@ -260,10 +152,9 @@ footer{margin-top:20px;text-align:center;color:var(--muted);font-size:12px;}
 
   <div class="progress"><div id="bar" class="bar"></div><div id="pct" class="pct">0%</div></div>
 
-  <!-- status row: left = message, right = ETA pill -->
   <div class="status-row" aria-live="polite">
     <div id="msg" class="status-left">—</div>
-    <div id="eta" class="eta-pill"><span class="label">ETA:</span><span class="value">--</span></div>
+    <div class="eta-pill"><span style="opacity:.85;color:var(--muted);font-weight:600;font-size:12px;margin-right:6px">ETA:</span><span id="etaVal" style="font-family:ui-monospace,Menlo,monospace;font-weight:800">--</span></div>
   </div>
 </main>
 
@@ -274,8 +165,7 @@ footer{margin-top:20px;text-align:center;color:var(--muted);font-size:12px;}
 let job=null;
 const bar=document.getElementById("bar"),pct=document.getElementById("pct");
 const msg=document.getElementById("msg");
-const etaEl=document.getElementById("eta");
-const etaVal=document.querySelector("#eta .value");
+const etaVal=document.getElementById("etaVal");
 const urlIn=document.getElementById("url"),thumb=document.getElementById("thumb"),preview=document.getElementById("preview"),pTitle=document.getElementById("pTitle"),pSub=document.getElementById("pSub");
 
 document.getElementById("frm").addEventListener("submit",async(e)=>{
@@ -336,7 +226,6 @@ async function poll(){
     else if(p.status==="error"){msg.textContent="❌ "+(p.error||"Download failed");}
     else msg.textContent = p.status==="downloaded" ? "✅ Download complete (fetching file)..." : "Downloading…";
 
-    // ETA preference: server-provided -> client-calc fallback
     let etaText="--";
     if(typeof p.eta_seconds !== "undefined" && p.eta_seconds !== null){
       etaText = formatSeconds(p.eta_seconds);
@@ -354,8 +243,6 @@ async function poll(){
       }catch(e){etaText="--";}
     }
     etaVal.textContent = etaText;
-    etaEl.title = "Speed: " + formatMbps(p.speed_bytes || 0);
-
     if(p.status==="finished"){ window.location="/fetch/"+job; job=null; return; }
     if(p.status==="error"){ job=null; return; }
     setTimeout(poll,800);
@@ -377,6 +264,7 @@ class Job:
         self.status = "queued"
         self.file = None
         self.error = None
+        self.log = ""
         self.speed_bytes = 0.0
         self.created_at = time.time()
         self.downloaded_at = None
@@ -388,16 +276,7 @@ class Job:
 YTDLP_URL_RE = re.compile(r"^https?://", re.I)
 
 def format_map_for_env():
-    """
-    Resolution-focused format selectors + audio quality keys.
-    Keys:
-      - mp4_144 / mp4_240 / mp4_360 / mp4_480 / mp4_720 / mp4_1080
-      - audio_mp3_128 / audio_mp3_192 / audio_mp3_320 / audio_best
-    If ffmpeg is available we download video+audio and merge/remux to mp4 where appropriate.
-    For audio -> use FFmpegExtractAudio postprocessor (preferredquality in kbps).
-    """
     if HAS_FFMPEG:
-        # video: get bestvideo up to height + merge with bestaudio
         video_map = {
             "mp4_144":  "bestvideo[height<=144]+bestaudio/best[height<=144]",
             "mp4_240":  "bestvideo[height<=240]+bestaudio/best[height<=240]",
@@ -415,7 +294,6 @@ def format_map_for_env():
         video_map.update(audio_map)
         return video_map
     else:
-        # No ffmpeg: prefer single-file mp4/webm at or below height; for audio download bestaudio (no conversion)
         return {
             "mp4_144":  "best[height<=144][ext=mp4]/best[height<=144]",
             "mp4_240":  "best[height<=240][ext=mp4]/best[height<=240]",
@@ -460,25 +338,29 @@ def run_download(job, url, fmt_key, filename):
             except Exception:
                 pass
 
-        # Use sanitized filename (no job ID in filename)
+        # sanitized filename (no job id)
         base_candidate = (filename.strip() if filename else "%(title)s").rstrip(".")
         safe_base = sanitize_filename(base_candidate)
-
         out = os.path.join(job.tmp, safe_base + ".%(ext)s")
+
+        # attach logger
+        ylog = YTDLPLogger(job)
 
         opts = {
             "format": fmt,
             "outtmpl": out,
             "progress_hooks": [hook],
-            "quiet": True,
-            "no_warnings": True,
+            "quiet": False,
+            "no_warnings": False,
             "noplaylist": True,
             "retries": 3,
             "socket_timeout": 30,
             "cookiefile": "cookies.txt",
+            "logger": ylog,
+            "verbose": True,
         }
 
-        # Audio-specific handling: add postprocessor only if ffmpeg is present
+        # audio mp3 conversion
         if fmt_key.startswith("audio_mp3_"):
             if HAS_FFMPEG:
                 kbps = fmt_key.split("_")[-1]
@@ -488,25 +370,33 @@ def run_download(job, url, fmt_key, filename):
                     "preferredquality": kbps
                 }]
                 opts["ffmpeg_location"] = ffmpeg_path()
-            else:
-                pass
-
-        # For video merges/remuxing when ffmpeg exists, set merge_output_format to mp4 for <=1080
+        # video merge/remux
         if HAS_FFMPEG and fmt_key.startswith("mp4_"):
             opts["ffmpeg_location"] = ffmpeg_path()
             opts["merge_output_format"] = "mp4"
 
+        # Run extractor
         with YoutubeDL(opts) as y:
             y.extract_info(url, download=True)
 
         files = glob.glob(os.path.join(job.tmp, "*"))
         job.file = max(files, key=os.path.getsize) if files else None
+
+        # If file exists but zero bytes -> error + log
+        if job.file and os.path.exists(job.file) and os.path.getsize(job.file) == 0:
+            job.status = "error"
+            job.error = "Downloaded file is empty"
+            job.log = getattr(job, "log", "") + "\n=== FILE ZERO BYTES: " + str(job.file) + " ===\n"
+            return
+
         job.status = "finished" if job.file else "error"
         if not job.file and job.status == "error":
             job.error = job.error or "No output file produced"
     except Exception as e:
         job.status = "error"
         job.error = str(e)[:400]
+        tb = traceback.format_exc()
+        job.log = getattr(job, "log", "") + "\n=== EXCEPTION ===\n" + tb
 
 @app.post("/start")
 def start():
@@ -566,6 +456,18 @@ def fetch(id):
     j.downloaded_at = time.time()
     j.status = "downloaded"
     return send_file(j.file, as_attachment=True, download_name=os.path.basename(j.file))
+
+@app.get("/job_log/<id>")
+def job_log(id):
+    j = JOBS.get(id)
+    if not j:
+        abort(404)
+    return jsonify({
+        "id": j.id,
+        "status": j.status,
+        "error": j.error,
+        "log": getattr(j, "log", "")[:20000]  # return up to 20k chars
+    })
 
 @app.get("/env")
 def env():
