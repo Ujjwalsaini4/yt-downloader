@@ -1,8 +1,5 @@
 # app.py
 # -*- coding: utf-8 -*-
-# Hyper Downloader - patched version (audio fixes included)
-# Replace your current app file with this. Works with yt-dlp + ffmpeg if available.
-
 import os
 import time
 import tempfile
@@ -29,7 +26,7 @@ def ffmpeg_path():
 HAS_FFMPEG = os.path.exists(ffmpeg_path())
 
 # ---------- HTML (UI kept as requested) ----------
-HTML = """
+HTML = r"""
 <!doctype html>
 <html lang="en">
 <head>
@@ -163,7 +160,7 @@ button[disabled]{opacity:.6;cursor:not-allowed;}
 .status-row{
   display:flex;align-items:center;justify-content:space-between;margin-top:10px;gap:12px;
 }
-.status-left{Color:var(--muted);font-size:13px;display:flex;align-items:center;gap:8px;}
+.status-left{color:var(--muted);font-size:13px;display:flex;align-items:center;gap:8px;}
 .eta-pill{
   display:inline-flex;align-items:center;gap:10px;padding:8px 12px;border-radius:999px;
   background:var(--pill-bg);border:1px solid var(--pill-border);font-weight:700;font-size:13px;color:#fff;
@@ -373,10 +370,6 @@ class Job:
 YTDLP_URL_RE = re.compile(r"^https?://", re.I)
 
 def format_map_for_env():
-    """
-    Return a mapping key -> yt-dlp format selector.
-    Audio selectors prefer m4a when ffmpeg is present for stable conversion to mp3.
-    """
     if HAS_FFMPEG:
         video_map = {
             "mp4_144":  "bestvideo[height<=144]+bestaudio/best[height<=144]",
@@ -386,20 +379,15 @@ def format_map_for_env():
             "mp4_720":  "bestvideo[height<=720]+bestaudio/best[height<=720]",
             "mp4_1080": "bestvideo[height<=1080]+bestaudio/best[height<=1080]",
         }
-
-        # Prefer m4a (aac) where available; fallback to best audio.
         audio_map = {
-            "audio_mp3_128": "bestaudio[ext=m4a]/bestaudio",
-            "audio_mp3_192": "bestaudio[ext=m4a]/bestaudio",
-            "audio_mp3_320": "bestaudio[ext=m4a]/bestaudio",
-            "audio_best": "bestaudio/best"
+            "audio_mp3_128": "bestaudio",
+            "audio_mp3_192": "bestaudio",
+            "audio_mp3_320": "bestaudio",
+            "audio_best":     "bestaudio",
         }
-
         video_map.update(audio_map)
         return video_map
-
     else:
-        # If ffmpeg missing, we still try to download best available streams.
         return {
             "mp4_144":  "best[height<=144][ext=mp4]/best[height<=144]",
             "mp4_240":  "best[height<=240][ext=mp4]/best[height<=240]",
@@ -410,7 +398,7 @@ def format_map_for_env():
             "audio_mp3_128": "bestaudio",
             "audio_mp3_192": "bestaudio",
             "audio_mp3_320": "bestaudio",
-            "audio_best": "bestaudio",
+            "audio_best":     "bestaudio",
         }
 
 def run_download(job, url, fmt_key, filename):
@@ -440,7 +428,6 @@ def run_download(job, url, fmt_key, filename):
                     if job.total_bytes:
                         job.percent = int((job.downloaded_bytes * 100) / job.total_bytes)
                 elif st == "finished":
-                    # note: 'finished' hook appears for each fragment; final output handled after extract_info
                     job.percent = 100
                     job.status = "downloaded"
                 elif st == "error":
@@ -456,7 +443,7 @@ def run_download(job, url, fmt_key, filename):
             safe = "%(title)s"
         out = os.path.join(job.tmp, safe + ".%(ext)s")
 
-        # Base options for yt-dlp
+        # Build initial options (we may modify 'format' and postprocessors on retries)
         base_opts = {
             "format": requested_fmt,
             "outtmpl": out,
@@ -467,10 +454,9 @@ def run_download(job, url, fmt_key, filename):
             "retries": 3,
             "socket_timeout": 30,
             "cookiefile": "cookies.txt",
-            # writeinfojson useful for debugging; disabled in quiet mode but we keep it off by default
         }
 
-        # Helper to run yt-dlp once with given opts, returns (ok, exception)
+        # Helper to run yt-dlp once with given opts, returns True on success
         def try_run(opts):
             try:
                 with YoutubeDL(opts) as y:
@@ -479,19 +465,26 @@ def run_download(job, url, fmt_key, filename):
             except Exception as e:
                 return False, e
 
+        # For audio->mp3 choices we may want ffmpeg postprocessor
         is_audio_mp3 = fmt_key.startswith("audio_mp3_")
         tried_attempts = []
-
-        # Build candidate selectors
+        # List of candidate format selectors (in order). We'll try each until one works.
         candidates = []
-        candidates.append(requested_fmt)
-        candidates.append(requested_fmt + "/best")
-        if is_audio_mp3:
-            candidates.extend(["bestaudio[ext=m4a]/bestaudio", "bestaudio", "bestaudio/best", "best"])
-        else:
-            candidates.append("best")
 
-        # Unique preserve order
+        # 1) try exactly requested selector first
+        candidates.append(requested_fmt)
+
+        # 2) if requested was a specific selector, try adding fallback "/best"
+        candidates.append(requested_fmt + "/best")
+
+        # 3) If it's audio request, prefer 'bestaudio' then 'bestaudio/best'
+        if is_audio_mp3:
+            candidates.extend(["bestaudio", "bestaudio/best", "best"])
+
+        # 4) For video selectors that might restrict ext/height, try 'best' as last resort
+        candidates.append("best")
+
+        # Make unique while preserving order
         seen = set(); filtered = []
         for c in candidates:
             if c and c not in seen:
@@ -502,13 +495,12 @@ def run_download(job, url, fmt_key, filename):
         last_exc = None
 
         for fmt_try in candidates:
-            opts = dict(base_opts)
+            opts = dict(base_opts)  # copy
             opts["format"] = fmt_try
 
-            # Setup ffmpeg-based postprocessor only when user asked for mp3 conversion and ffmpeg exists
+            # If audio->mp3 and ffmpeg exists and we are trying to convert, set postprocessor
             if is_audio_mp3 and HAS_FFMPEG:
-                kbps = fmt_key.split("_")[-1]  # e.g. '192'
-                # Prefer extracting audio to mp3 using ffmpeg
+                kbps = fmt_key.split("_")[-1]  # last part e.g. "192"
                 opts["postprocessors"] = [{
                     "key": "FFmpegExtractAudio",
                     "preferredcodec": "mp3",
@@ -516,9 +508,10 @@ def run_download(job, url, fmt_key, filename):
                 }]
                 opts["ffmpeg_location"] = ffmpeg_path()
             else:
+                # ensure we don't leave stale postprocessors if any
                 opts.pop("postprocessors", None)
 
-            # For video merges (video+audio), configure ffmpeg merge if available
+            # If merging video+audio desired and ffmpeg available, set merge_output_format for mp4 keys
             if HAS_FFMPEG and fmt_key.startswith("mp4_"):
                 opts["ffmpeg_location"] = ffmpeg_path()
                 opts["merge_output_format"] = "mp4"
@@ -531,40 +524,23 @@ def run_download(job, url, fmt_key, filename):
             else:
                 last_exc = exc
 
-        # Find largest output file in tmp (best guess)
+        # After attempts, set job.file based on produced files (if any)
         files = glob.glob(os.path.join(job.tmp, "*"))
-        files = [f for f in files if os.path.isfile(f)]
-        job.file = None
-        if files:
-            # Prefer mp3 if conversion was requested and produced one
-            if is_audio_mp3:
-                mp3s = [f for f in files if f.lower().endswith(".mp3")]
-                if mp3s:
-                    job.file = max(mp3s, key=os.path.getsize)
-                else:
-                    # fallback to largest (m4a/webm/whatever)
-                    job.file = max(files, key=os.path.getsize)
-            else:
-                job.file = max(files, key=os.path.getsize)
-
+        job.file = max(files, key=os.path.getsize) if files else None
         if success and job.file:
             job.status = "finished"
             job.downloaded_at = time.time()
             job.percent = 100
-            # If user requested mp3 but ffmpeg missing and result isn't mp3, add a hint
-            if is_audio_mp3 and not HAS_FFMPEG and not job.file.lower().endswith(".mp3"):
-                job.error = ("Downloaded audio file is in original format (ffmpeg not found on server). "
-                             "To auto-convert to MP3, install ffmpeg.")
             return
         else:
             # Construct helpful error message
             if last_exc:
                 msg = str(last_exc)
-                low = msg.lower()
-                if "requested format is not available" in msg or "format not available" in low:
+                if "Requested format is not available" in msg or "format not available" in msg.lower():
                     hint = ("Requested format not available on that video. "
                             "Tried: " + ", ".join(tried_attempts) + ". "
-                            "If you need MP3 conversion, ensure ffmpeg is installed on the server.")
+                            "Server fell back to available streams (bestaudio/best). "
+                            "If you need MP3 conversion, install ffmpeg on the server.")
                     job.error = hint
                 else:
                     job.error = (msg[:400] + " — tried: " + ", ".join(tried_attempts))
@@ -657,4 +633,4 @@ def cleanup(id):
     return jsonify({"status": "ok"})
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=False)
