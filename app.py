@@ -29,7 +29,7 @@ def ffmpeg_path():
 HAS_FFMPEG = os.path.exists(ffmpeg_path())
 
 # ---------- HTML (UI kept as requested) ----------
-HTML = r"""
+HTML = """
 <!doctype html>
 <html lang="en">
 <head>
