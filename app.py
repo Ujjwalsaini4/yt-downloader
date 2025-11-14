@@ -8,7 +8,8 @@ import glob
 import threading
 import uuid
 import re
-from flask import Flask, request, jsonify, render_template_string, abort, send_file
+import mimetypes
+from flask import Flask, request, jsonify, render_template_string, abort, send_file, Response
 from shutil import which
 from yt_dlp import YoutubeDL
 
@@ -25,7 +26,7 @@ def ffmpeg_path():
 HAS_FFMPEG = os.path.exists(ffmpeg_path())
 
 # ---------- HTML (UI kept as requested) ----------
-HTML = r"""
+HTML = """
 <!doctype html>
 <html lang="en">
 <head>
@@ -369,16 +370,7 @@ class Job:
 YTDLP_URL_RE = re.compile(r"^https?://", re.I)
 
 def format_map_for_env():
-    """
-    Resolution-focused format selectors + audio quality keys.
-    Keys:
-      - mp4_144 / mp4_240 / mp4_360 / mp4_480 / mp4_720 / mp4_1080
-      - audio_mp3_128 / audio_mp3_192 / audio_mp3_320 / audio_best
-    If ffmpeg is available we download video+audio and merge/remux to mp4 where appropriate.
-    For audio -> use FFmpegExtractAudio postprocessor (preferredquality in kbps).
-    """
     if HAS_FFMPEG:
-        # video: get bestvideo up to height + merge with bestaudio
         video_map = {
             "mp4_144":  "bestvideo[height<=144]+bestaudio/best[height<=144]",
             "mp4_240":  "bestvideo[height<=240]+bestaudio/best[height<=240]",
@@ -396,7 +388,6 @@ def format_map_for_env():
         video_map.update(audio_map)
         return video_map
     else:
-        # No ffmpeg: prefer single-file mp4/webm at or below height; for audio download bestaudio (no conversion)
         return {
             "mp4_144":  "best[height<=144][ext=mp4]/best[height<=144]",
             "mp4_240":  "best[height<=240][ext=mp4]/best[height<=240]",
@@ -438,13 +429,23 @@ def run_download(job, url, fmt_key, filename):
                         job.percent = int((job.downloaded_bytes * 100) / job.total_bytes)
                 elif st == "finished":
                     job.percent = 100
+                    job.status = "downloaded"
+                elif st == "error":
+                    job.status = "error"
+                    job.error = d.get("msg") or "Download hook error"
             except Exception:
                 pass
 
+        # Prepare base filename:
         base = (filename.strip() if filename else "%(title)s").rstrip(".")
-        # include job id in name to avoid collisions
-        safe_base = f"{job.id}__{base}"
-        out = os.path.join(job.tmp, safe_base + ".%(ext)s")
+        # sanitize: remove characters that are unsafe in filenames on many filesystems
+        safe = re.sub(r'[\\/*?:"<>|]', "_", base)
+        safe = safe.strip()
+        if not safe:
+            safe = "%(title)s"
+
+        # Output template WITHOUT job.id prefix (so returned file uses original title / user filename)
+        out = os.path.join(job.tmp, safe + ".%(ext)s")
 
         opts = {
             "format": fmt,
@@ -461,25 +462,18 @@ def run_download(job, url, fmt_key, filename):
         # Audio-specific handling: add postprocessor only if ffmpeg is present
         if fmt_key.startswith("audio_mp3_"):
             if HAS_FFMPEG:
-                # preferredquality expects a string like "192" (kbps)
                 kbps = fmt_key.split("_")[-1]
-                # Add FFmpegExtractAudio postprocessor to convert to mp3 at requested kbps
                 opts["postprocessors"] = [{
                     "key": "FFmpegExtractAudio",
                     "preferredcodec": "mp3",
-                    "preferredquality": kbps  # yt-dlp uses this as kbps for mp3
+                    "preferredquality": kbps
                 }]
-                # ensure ffmpeg location provided
                 opts["ffmpeg_location"] = ffmpeg_path()
             else:
-                # No ffmpeg: we'll download best audio stream as-is (no conversion)
-                # user will receive the bestaudio in original container/codec
                 pass
 
-        # For video merges/remuxing when ffmpeg exists, set merge_output_format to mp4 for <=1080
         if HAS_FFMPEG and fmt_key.startswith("mp4_"):
             opts["ffmpeg_location"] = ffmpeg_path()
-            # For <=1080, prefer mp4 container (remux). If original codecs incompatible, ytdlp may re-encode.
             opts["merge_output_format"] = "mp4"
 
         # Execute download
@@ -488,13 +482,20 @@ def run_download(job, url, fmt_key, filename):
 
         files = glob.glob(os.path.join(job.tmp, "*"))
         job.file = max(files, key=os.path.getsize) if files else None
-        job.status = "finished" if job.file else "error"
-        if not job.file and job.status == "error":
+        if job.file:
+            job.status = "finished"
+            job.downloaded_at = time.time()
+            job.percent = 100
+        else:
+            job.status = "error"
             job.error = job.error or "No output file produced"
     except Exception as e:
         job.status = "error"
-        # keep error message reasonably short
         job.error = str(e)[:400]
+
+@app.route("/")
+def index():
+    return render_template_string(HTML)
 
 @app.post("/start")
 def start():
@@ -524,7 +525,6 @@ def progress(id):
     if not j:
         abort(404)
     speed_b = getattr(j, "speed_bytes", 0) or 0
-    speed_mbps = round((speed_b * 8) / 1_000_000, 1) if speed_b and speed_b > 0 else 0.0
     eta_seconds = None
     downloaded = getattr(j, "downloaded_bytes", 0) or 0
     total = getattr(j, "total_bytes", 0) or 0
@@ -533,64 +533,29 @@ def progress(id):
             eta_seconds = int((total - downloaded) / speed_b)
         except Exception:
             eta_seconds = None
+
     return jsonify({
         "percent": j.percent,
         "status": j.status,
         "error": j.error,
         "speed_bytes": speed_b,
-        "speed_mbps": speed_mbps,
-        "downloaded_bytes": downloaded,
         "total_bytes": total,
+        "downloaded_bytes": downloaded,
         "eta_seconds": eta_seconds
     })
 
 @app.get("/fetch/<id>")
-def fetch(id):
+def fetch_file(id):
     j = JOBS.get(id)
     if not j:
         abort(404)
     if not j.file or not os.path.exists(j.file):
-        return jsonify({"error": "File not ready"}), 400
-    j.downloaded_at = time.time()
-    j.status = "downloaded"
-    # send as attachment with original filename
-    return send_file(j.file, as_attachment=True, download_name=os.path.basename(j.file))
+        return jsonify({"error": "File not ready"}), 404
 
-@app.get("/env")
-def env():
-    return jsonify({"ffmpeg": HAS_FFMPEG})
-
-# Cleanup worker (auto-clean)
-CLEANUP_INTERVAL = 60 * 10
-JOB_TTL_SECONDS = 60 * 60      # remove finished/error jobs older than 1 hour
-DOWNLOAD_KEEP_SECONDS = 60     # after user downloads file, remove from server after 60s
-
-def cleanup_worker():
-    while True:
-        try:
-            now = time.time()
-            remove = []
-            for jid, job in list(JOBS.items()):
-                if job.status in ("finished", "error") and (now - job.created_at > JOB_TTL_SECONDS):
-                    remove.append(jid)
-                if job.status == "downloaded" and job.downloaded_at and (now - job.downloaded_at > DOWNLOAD_KEEP_SECONDS):
-                    remove.append(jid)
-            for rid in remove:
-                j = JOBS.pop(rid, None)
-                if j:
-                    try:
-                        shutil.rmtree(j.tmp, ignore_errors=True)
-                    except Exception:
-                        pass
-        except Exception as e:
-            print("[cleanup]", e)
-        time.sleep(CLEANUP_INTERVAL)
-
-threading.Thread(target=cleanup_worker, daemon=True).start()
-
-@app.get("/")
-def home():
-    return render_template_string(HTML)
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    # Use the real filename on disk as download name (sanitized earlier)
+    filename_on_disk = os.path.basename(j.file)
+    # optional: if you want to rename before sending (e.g., strip %() templates) you could process here
+    # send file as attachment
+    try:
+        # Determine mimetype
+        mimet
