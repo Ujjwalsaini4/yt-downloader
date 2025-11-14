@@ -24,7 +24,7 @@ def ffmpeg_path():
     return which("ffmpeg") or "/usr/bin/ffmpeg"
 HAS_FFMPEG = os.path.exists(ffmpeg_path())
 
-# ---------- HTML (UI + ETA pill + progress) ----------
+# ---------- HTML (UI kept as requested) ----------
 HTML = r"""
 <!doctype html>
 <html lang="en">
@@ -79,9 +79,18 @@ header{
   color:#fff;font-weight:800;font-size:18px;
   box-shadow:0 8px 24px rgba(6,182,212,.25);
 }
-@keyframes bgPulse { 0%{filter:hue-rotate(0deg)}50%{filter:hue-rotate(8deg)}100%{filter:hue-rotate(0deg)} }
+/* gentle background pulse for subtle shine */
+@keyframes bgPulse {
+  0% { filter: hue-rotate(0deg) saturate(100%); }
+  50% { filter: hue-rotate(8deg) saturate(110%); }
+  100% { filter: hue-rotate(0deg) saturate(100%); }
+}
 .logo { animation: bgPulse 8s ease-in-out infinite; }
-.brand-title span{ background:var(--accent); -webkit-background-clip:text; color:transparent; }
+.brand-title span{
+  background:var(--accent);
+  -webkit-background-clip:text;
+  color:transparent;
+}
 
 /* Card */
 .card{
@@ -109,39 +118,76 @@ button{
   box-shadow:0 8px 28px rgba(6,182,212,.25);
   cursor:pointer;transition:transform .08s;
 }
-button:active{transform:scale(.98)}
-button[disabled]{opacity:.6;cursor:not-allowed}
+button:active{transform:scale(.98);}
+button[disabled]{opacity:.6;cursor:not-allowed;}
 
 /* Grid responsive */
 .grid{display:grid;gap:12px;}
 @media(min-width:700px){.grid{grid-template-columns:2fr 1fr 1.2fr auto;align-items:end;}}
-.full{grid-column:1/-1}
+.full{grid-column:1/-1;}
 
 /* Progress bar */
-.progress{margin-top:14px;height:14px;border-radius:999px;background:rgba(255,255,255,0.04);overflow:hidden;position:relative}
-.bar{width:0%;height:100%;background:var(--accent);transition:width .3s ease;box-shadow:0 0 20px rgba(6,182,212,.4)}
-.pct{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);color:#fff;font-weight:700;font-size:13px;text-shadow:0 1px 2px rgba(0,0,0,.5)}
+.progress{
+  margin-top:14px;height:14px;border-radius:999px;
+  background:rgba(255,255,255,0.04);
+  overflow:hidden;position:relative;
+}
+.bar{
+  width:0%;height:100%;
+  background:var(--accent);
+  transition:width .3s ease;
+  box-shadow:0 0 20px rgba(6,182,212,.4);
+}
+.pct{
+  position:absolute;left:50%;top:50%;
+  transform:translate(-50%,-50%);
+  color:#fff;font-weight:700;font-size:13px;
+  text-shadow:0 1px 2px rgba(0,0,0,0.5);
+}
 
-/* sheen */
-.bar::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02), rgba(255,255,255,0.06));transform:translateX(-40%);opacity:0.6;filter:blur(6px);animation:sheen 2.4s linear infinite}
+/* sheen overlay on progress */
+.bar::after{
+  content:"";
+  position:absolute;inset:0;
+  background:linear-gradient(90deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02), rgba(255,255,255,0.06));
+  transform:translateX(-40%);opacity:0.6;filter:blur(6px);
+  animation: sheen 2.4s linear infinite;
+}
 @keyframes sheen{100%{transform:translateX(120%)}}
 
 /* Status row: message left, ETA pill right */
-.status-row{display:flex;align-items:center;justify-content:space-between;margin-top:10px;gap:12px}
-.status-left{color:var(--muted);font-size:13px;display:flex;align-items:center;gap:8px}
-.eta-pill{display:inline-flex;align-items:center;gap:10px;padding:8px 12px;border-radius:999px;background:var(--pill-bg);border:1px solid var(--pill-border);font-weight:700;font-size:13px;color:#fff;min-width:90px;justify-content:center;box-shadow:0 6px 18px rgba(6,182,212,0.06)}
+.status-row{
+  display:flex;align-items:center;justify-content:space-between;margin-top:10px;gap:12px;
+}
+.status-left{color:var(--muted);font-size:13px;display:flex;align-items:center;gap:8px;}
+.eta-pill{
+  display:inline-flex;align-items:center;gap:10px;padding:8px 12px;border-radius:999px;
+  background:var(--pill-bg);border:1px solid var(--pill-border);font-weight:700;font-size:13px;color:#fff;
+  min-width:90px;justify-content:center;
+  box-shadow:0 6px 18px rgba(6,182,212,0.06);
+}
+/* make ETA number monospaced-ish */
 .eta-pill .label{opacity:0.85;color:var(--muted);font-weight:600;font-size:12px;margin-right:6px}
 .eta-pill .value{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Roboto Mono,monospace;font-weight:800}
 
 /* Preview */
-.preview{display:none;margin-top:10px;padding:10px;background:rgba(255,255,255,0.02);border-radius:12px;border:1px solid rgba(255,255,255,0.05);box-shadow:inset 0 1px 0 rgba(255,255,255,0.03)}
-.preview-row{display:flex;gap:10px;align-items:center}
-.thumb{width:120px;height:68px;border-radius:8px;object-fit:cover;background:#081627}
-.meta .title{font-weight:700;font-size:15px}
-.meta .sub{color:var(--muted);font-size:13px;margin-top:4px}
+.preview{
+  display:none;margin-top:10px;padding:10px;
+  background:rgba(255,255,255,0.02);
+  border-radius:12px;border:1px solid rgba(255,255,255,0.05);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,0.03);
+}
+.preview-row{display:flex;gap:10px;align-items:center;}
+.thumb{width:120px;height:68px;border-radius:8px;object-fit:cover;background:#081627;}
+.meta .title{font-weight:700;font-size:15px;}
+.meta .sub{color:var(--muted);font-size:13px;margin-top:4px;}
 
-footer{margin-top:20px;text-align:center;color:var(--muted);font-size:12px}
-@media(max-width:520px){.eta-pill{min-width:72px;padding:6px 10px;font-size:12px}.brand-title h1{font-size:18px}}
+footer{margin-top:20px;text-align:center;color:var(--muted);font-size:12px;}
+/* responsive tweaks */
+@media(max-width:520px){
+  .eta-pill{min-width:72px;padding:6px 10px;font-size:12px}
+  .brand-title h1{font-size:18px}
+}
 </style>
 </head>
 <body>
@@ -172,11 +218,20 @@ footer{margin-top:20px;text-align:center;color:var(--muted);font-size:12px}
       <div><label>Video URL</label><input id="url" placeholder="https://youtube.com/watch?v=..." required></div>
       <div><label>Format</label>
         <select id="format">
-          <option value="mp4_720" data-need-ffmpeg="1">720p MP4</option>
-          <option value="mp4_1080" data-need-ffmpeg="1">1080p MP4</option>
-          <option value="mp4_1440" data-need-ffmpeg="1">1440p (2K) MKV</option>
-          <option value="mp4_2160" data-need-ffmpeg="1">2160p (4K) MKV</option>
-          <option value="audio_mp3" data-need-ffmpeg="1">MP3 Only</option>
+          <optgroup label="Video (MP4)">
+            <option value="mp4_144" data-need-ffmpeg="0">144p MP4</option>
+            <option value="mp4_240" data-need-ffmpeg="0">240p MP4</option>
+            <option value="mp4_360" data-need-ffmpeg="0">360p MP4</option>
+            <option value="mp4_480" data-need-ffmpeg="0">480p MP4</option>
+            <option value="mp4_720" data-need-ffmpeg="1">720p MP4</option>
+            <option value="mp4_1080" data-need-ffmpeg="1">1080p MP4</option>
+          </optgroup>
+          <optgroup label="Audio">
+            <option value="audio_mp3_128" data-need-ffmpeg="1">MP3 — 128 kbps</option>
+            <option value="audio_mp3_192" data-need-ffmpeg="1">MP3 — 192 kbps</option>
+            <option value="audio_mp3_320" data-need-ffmpeg="1">MP3 — 320 kbps</option>
+            <option value="audio_best" data-need-ffmpeg="0">Best audio (original)</option>
+          </optgroup>
         </select>
       </div>
       <div><label>Filename</label><input id="name" placeholder="My video"></div>
@@ -315,25 +370,44 @@ YTDLP_URL_RE = re.compile(r"^https?://", re.I)
 
 def format_map_for_env():
     """
-    Resolution-focused format selectors.
-    For high-res >1080 we won't force MP4; merging will use MKV (remux) to preserve original codecs.
+    Resolution-focused format selectors + audio quality keys.
+    Keys:
+      - mp4_144 / mp4_240 / mp4_360 / mp4_480 / mp4_720 / mp4_1080
+      - audio_mp3_128 / audio_mp3_192 / audio_mp3_320 / audio_best
+    If ffmpeg is available we download video+audio and merge/remux to mp4 where appropriate.
+    For audio -> use FFmpegExtractAudio postprocessor (preferredquality in kbps).
     """
     if HAS_FFMPEG:
-        return {
-            "mp4_720":  "bestvideo[height<=720]+bestaudio/best",
-            "mp4_1080": "bestvideo[height<=1080]+bestaudio/best",
-            "mp4_1440": "bestvideo[height<=1440]+bestaudio/best",
-            "mp4_2160": "bestvideo[height<=2160]+bestaudio/best",
-            "audio_mp3": "bestaudio"
+        # video: get bestvideo up to height + merge with bestaudio
+        video_map = {
+            "mp4_144":  "bestvideo[height<=144]+bestaudio/best[height<=144]",
+            "mp4_240":  "bestvideo[height<=240]+bestaudio/best[height<=240]",
+            "mp4_360":  "bestvideo[height<=360]+bestaudio/best[height<=360]",
+            "mp4_480":  "bestvideo[height<=480]+bestaudio/best[height<=480]",
+            "mp4_720":  "bestvideo[height<=720]+bestaudio/best[height<=720]",
+            "mp4_1080": "bestvideo[height<=1080]+bestaudio/best[height<=1080]",
         }
+        audio_map = {
+            "audio_mp3_128": "bestaudio",
+            "audio_mp3_192": "bestaudio",
+            "audio_mp3_320": "bestaudio",
+            "audio_best":     "bestaudio",
+        }
+        video_map.update(audio_map)
+        return video_map
     else:
-        # Without ffmpeg, try single-file mp4/webm variants
+        # No ffmpeg: prefer single-file mp4/webm at or below height; for audio download bestaudio (no conversion)
         return {
+            "mp4_144":  "best[height<=144][ext=mp4]/best[height<=144]",
+            "mp4_240":  "best[height<=240][ext=mp4]/best[height<=240]",
+            "mp4_360":  "best[height<=360][ext=mp4]/best[height<=360]",
+            "mp4_480":  "best[height<=480][ext=mp4]/best[height<=480]",
             "mp4_720":  "best[height<=720][ext=mp4]/best[height<=720]",
             "mp4_1080": "best[height<=1080][ext=mp4]/best[height<=1080]",
-            "mp4_1440": "best[height<=1440][ext=mp4]/best[height<=1440]",
-            "mp4_2160": "best[height<=2160][ext=mp4]/best[height<=2160]",
-            "audio_mp3": "bestaudio"
+            "audio_mp3_128": "bestaudio",
+            "audio_mp3_192": "bestaudio",
+            "audio_mp3_320": "bestaudio",
+            "audio_best":     "bestaudio",
         }
 
 def run_download(job, url, fmt_key, filename):
@@ -343,7 +417,8 @@ def run_download(job, url, fmt_key, filename):
             job.error = "Invalid URL"
             return
 
-        fmt = format_map_for_env().get(fmt_key)
+        fmt_map = format_map_for_env()
+        fmt = fmt_map.get(fmt_key)
         if fmt is None:
             job.status = "error"
             job.error = "Format not supported"
@@ -383,16 +458,31 @@ def run_download(job, url, fmt_key, filename):
             "cookiefile": "cookies.txt",
         }
 
-        if HAS_FFMPEG:
-            # Use MKV for high-res remux to preserve VP9/AV1 without re-encode
-            if fmt_key in ("mp4_1440", "mp4_2160"):
-                opts["merge_output_format"] = "mkv"
+        # Audio-specific handling: add postprocessor only if ffmpeg is present
+        if fmt_key.startswith("audio_mp3_"):
+            if HAS_FFMPEG:
+                # preferredquality expects a string like "192" (kbps)
+                kbps = fmt_key.split("_")[-1]
+                # Add FFmpegExtractAudio postprocessor to convert to mp3 at requested kbps
+                opts["postprocessors"] = [{
+                    "key": "FFmpegExtractAudio",
+                    "preferredcodec": "mp3",
+                    "preferredquality": kbps  # yt-dlp uses this as kbps for mp3
+                }]
+                # ensure ffmpeg location provided
+                opts["ffmpeg_location"] = ffmpeg_path()
             else:
-                opts["merge_output_format"] = "mp4"
-            opts["ffmpeg_location"] = ffmpeg_path()
-            if fmt_key == "audio_mp3":
-                opts["postprocessors"] = [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3"}]
+                # No ffmpeg: we'll download best audio stream as-is (no conversion)
+                # user will receive the bestaudio in original container/codec
+                pass
 
+        # For video merges/remuxing when ffmpeg exists, set merge_output_format to mp4 for <=1080
+        if HAS_FFMPEG and fmt_key.startswith("mp4_"):
+            opts["ffmpeg_location"] = ffmpeg_path()
+            # For <=1080, prefer mp4 container (remux). If original codecs incompatible, ytdlp may re-encode.
+            opts["merge_output_format"] = "mp4"
+
+        # Execute download
         with YoutubeDL(opts) as y:
             y.extract_info(url, download=True)
 
@@ -403,13 +493,14 @@ def run_download(job, url, fmt_key, filename):
             job.error = job.error or "No output file produced"
     except Exception as e:
         job.status = "error"
+        # keep error message reasonably short
         job.error = str(e)[:400]
 
 @app.post("/start")
 def start():
     d = request.json or {}
     job = Job()
-    threading.Thread(target=run_download, args=(job, d.get("url", ""), d.get("format_choice", "mp4_2160"), d.get("filename")), daemon=True).start()
+    threading.Thread(target=run_download, args=(job, d.get("url", ""), d.get("format_choice", "mp4_1080"), d.get("filename")), daemon=True).start()
     return jsonify({"job_id": job.id})
 
 @app.post("/info")
@@ -462,6 +553,7 @@ def fetch(id):
         return jsonify({"error": "File not ready"}), 400
     j.downloaded_at = time.time()
     j.status = "downloaded"
+    # send as attachment with original filename
     return send_file(j.file, as_attachment=True, download_name=os.path.basename(j.file))
 
 @app.get("/env")
