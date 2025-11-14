@@ -558,4 +558,24 @@ def fetch_file(id):
     # send file as attachment
     try:
         # Determine mimetype
-        mimet
+        mimetype, _ = mimetypes.guess_type(j.file)
+        return send_file(j.file, as_attachment=True, download_name=filename_on_disk, mimetype=mimetype or "application/octet-stream")
+    except Exception as e:
+        return jsonify({"error": "Failed to send file", "detail": str(e)[:300]}), 500
+
+# Optional cleanup endpoint (safe to call manually)
+@app.post("/cleanup/<id>")
+def cleanup(id):
+    j = JOBS.pop(id, None)
+    if not j:
+        return jsonify({"status": "not_found"}), 404
+    try:
+        if os.path.exists(j.tmp):
+            shutil.rmtree(j.tmp)
+    except Exception:
+        pass
+    return jsonify({"status": "ok"})
+
+if __name__ == "__main__":
+    # choose host/port as needed; debug True for development only
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=False)
