@@ -16,6 +16,8 @@ from yt_dlp import YoutubeDL
 # ---------- CONFIG ----------
 DEBUG_LOG = os.environ.get("DEBUG_LOG", "") not in ("", "0", "false", "False")
 PORT = int(os.environ.get("PORT", 5000))
+# Filename prefix (default)
+APP_PREFIX = os.environ.get("APP_PREFIX", "Hyper_Downloader")
 # How long to keep job objects before cleanup (seconds)
 JOB_TTL_SECONDS = 60 * 60
 # How long to keep downloaded file available after user fetch (seconds)
@@ -383,10 +385,26 @@ class Job:
 
 URL_RE = re.compile(r"^https?://", re.I)
 
+# characters to remove/replace for safe filenames on most OSes
+_FILENAME_SANITIZE_RE = re.compile(r'[\\/:*?"<>|]')
+
+def sanitize_filename(name: str, max_len: int = 240) -> str:
+    """Sanitize filename by replacing problematic chars and trimming length."""
+    if not name:
+        return "file"
+    # strip leading/trailing whitespace
+    s = name.strip()
+    # replace forbidden characters with underscore
+    s = _FILENAME_SANITIZE_RE.sub("_", s)
+    # collapse multiple spaces
+    s = re.sub(r'\s+', ' ', s)
+    # trim to max_len (preserve extension later)
+    if len(s) > max_len:
+        s = s[:max_len].rstrip()
+    return s
+
 def _build_video_format(video_res):
-    """Build yt-dlp format expression with fallbacks.
-    Prefer exact height <= video_res, avoid audio-only video, prefer mp4 for <=1080.
-    """
+    """Build yt-dlp format expression with fallbacks."""
     if not video_res:
         return "bestvideo[vcodec!=none]+bestaudio/best"
 
@@ -399,12 +417,9 @@ def _build_video_format(video_res):
         return "bestvideo[vcodec!=none]+bestaudio/best"
 
     parts = []
-    # 1) prefer mp4 video with height<=RES + bestaudio or best with height limit
     if res <= 1080:
         parts.append(f"bestvideo[height<={res}][vcodec!=none][ext=mp4]+bestaudio/best[height<={res}]")
-    # 2) general bestvideo with height limit + bestaudio
     parts.append(f"bestvideo[height<={res}][vcodec!=none]+bestaudio")
-    # 3) fallback to letting yt-dlp pick
     parts.append("bestvideo+bestaudio/best")
     return "/".join(parts)
 
@@ -415,7 +430,7 @@ def run_download(job, url, fmt_key, filename, video_res=None, audio_bitrate=None
             job.error = "Invalid URL"
             return
 
-        # normalize
+        # normalize inputs
         try:
             video_res = int(video_res) if video_res else None
         except Exception:
@@ -448,9 +463,47 @@ def run_download(job, url, fmt_key, filename, video_res=None, audio_bitrate=None
             except Exception:
                 pass
 
-        base = (filename.strip() if filename else "%(title)s").rstrip(".")
-        safe_base = f"{job.id}__{base}"
-        outtmpl = os.path.join(job.tmp, safe_base + ".%(ext)s")
+        # Decide base filename: user provided filename else yt-dlp template
+        base_template = (filename.strip() if filename else "%(title)s").rstrip(".")
+        # If yt-dlp template used, it will be replaced when extract_info runs; but we still sanitize the given name.
+        # We will include APP_PREFIX + '__' + sanitized base as output template.
+        # sanitize the provided filename (if it contains template tokens, leave them so yt-dlp can substitute)
+        if "%(" in base_template and ")" in base_template:
+            # user used template tokens, keep as-is but ensure no unsafe literal chars outside tokens
+            # replace forbidden chars except inside %(...) tokens
+            def _replace_outside_tokens(s):
+                out = []
+                i = 0
+                while i < len(s):
+                    if s[i] == '%' and i+1 < len(s) and s[i+1] == '(':
+                        # copy until closing ')'
+                        j = i+2
+                        while j < len(s) and s[j] != ')':
+                            j += 1
+                        # include token as-is (if no closing, just copy rest)
+                        if j < len(s):
+                            out.append(s[i:j+1])
+                            i = j+1
+                            continue
+                        else:
+                            out.append(s[i:])
+                            break
+                    else:
+                        out.append(s[i])
+                        i += 1
+                joined = "".join(out)
+                # now sanitize forbidden chars in the joined string (this will also sanitize inside tokens if any remained - but tokens are preserved above)
+                return _FILENAME_SANITIZE_RE.sub("_", joined)
+            safe_base = _replace_outside_tokens(base_template)
+        else:
+            safe_base = sanitize_filename(base_template)
+
+        # Construct final outtmpl: prefix + '__' + safe_base + .%(ext)s
+        prefix = APP_PREFIX.strip() or "Hyper_Downloader"
+        # sanitize prefix too (avoid accidental bad chars)
+        prefix_safe = _FILENAME_SANITIZE_RE.sub("_", prefix)
+        outtmpl_base = f"{prefix_safe}__{safe_base}"
+        outtmpl = os.path.join(job.tmp, outtmpl_base + ".%(ext)s")
 
         opts = {
             "format": fmt,
@@ -462,11 +515,9 @@ def run_download(job, url, fmt_key, filename, video_res=None, audio_bitrate=None
             "retries": 3,
             "socket_timeout": 30,
             "cookiefile": "cookies.txt",
-            # reduce console spam when not debugging
         }
 
         if DEBUG_LOG:
-            # include verbose debug info in extraction to stdout
             opts["verbose"] = True
 
         if HAS_FFMPEG:
@@ -480,7 +531,6 @@ def run_download(job, url, fmt_key, filename, video_res=None, audio_bitrate=None
                 except Exception:
                     opts["merge_output_format"] = "mp4"
             else:
-                # postprocessor for MP3 extraction with chosen bitrate
                 pp = {"key": "FFmpegExtractAudio", "preferredcodec": "mp3"}
                 pp["preferredquality"] = str(audio_bitrate) if audio_bitrate else "192"
                 opts["postprocessors"] = [pp]
@@ -488,14 +538,12 @@ def run_download(job, url, fmt_key, filename, video_res=None, audio_bitrate=None
         # Run yt-dlp
         try:
             with YoutubeDL(opts) as y:
-                # If debug on, log chosen format info to job.error temporarily so user can fetch logs
-                info = y.extract_info(url, download=True)
+                y.extract_info(url, download=True)
         except Exception as e:
             job.status = "error"
             job.error = f"yt-dlp failed: {str(e)[:400]}"
             return
 
-        # find largest file in temp dir as output
         files = glob.glob(os.path.join(job.tmp, "*"))
         job.file = max(files, key=os.path.getsize) if files else None
         if job.file:
@@ -577,7 +625,7 @@ def fetch(id):
 
 @app.get("/env")
 def env():
-    return jsonify({"ffmpeg": HAS_FFMPEG, "debug": DEBUG_LOG})
+    return jsonify({"ffmpeg": HAS_FFMPEG, "debug": DEBUG_LOG, "prefix": APP_PREFIX})
 
 def cleanup_worker():
     while True:
@@ -607,6 +655,5 @@ def home():
     return render_template_string(HTML)
 
 if __name__ == "__main__":
-    print("Starting app on port", PORT, "ffmpeg:", HAS_FFMPEG, "DEBUG_LOG:", DEBUG_LOG)
+    print("Starting app on port", PORT, "ffmpeg:", HAS_FFMPEG, "DEBUG_LOG:", DEBUG_LOG, "PREFIX:", APP_PREFIX)
     app.run(host="0.0.0.0", port=PORT)
-     
