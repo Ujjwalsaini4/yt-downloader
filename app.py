@@ -35,6 +35,7 @@ HTML = r"""
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
 <style>
+/* (styles unchanged - same as your original) */
 :root{
   --bg:#050b16;
   --card:#0a162b;
@@ -218,13 +219,36 @@ footer{margin-top:20px;text-align:center;color:var(--muted);font-size:12px;}
       <div><label>Video URL</label><input id="url" placeholder="https://youtube.com/watch?v=..." required></div>
       <div><label>Format</label>
         <select id="format">
-          <option value="mp4_720" data-need-ffmpeg="1">720p MP4</option>
-          <option value="mp4_1080" data-need-ffmpeg="1">1080p MP4</option>
-          <option value="mp4_1440" data-need-ffmpeg="1">1440p (2K) MKV</option>
-          <option value="mp4_2160" data-need-ffmpeg="1">2160p (4K) MKV</option>
-          <option value="audio_mp3" data-need-ffmpeg="1">MP3 Only</option>
+          <option value="video">Video (merge bestvideo + bestaudio)</option>
+          <option value="audio">Audio only (MP3)</option>
         </select>
       </div>
+
+      <!-- New: Video quality selector (144 - 1080) -->
+      <div>
+        <label>Video quality</label>
+        <select id="video_res">
+          <option value="144">144p</option>
+          <option value="240">240p</option>
+          <option value="360">360p</option>
+          <option value="480">480p</option>
+          <option value="720">720p</option>
+          <option value="1080" selected>1080p</option>
+        </select>
+      </div>
+
+      <!-- New: Audio bitrate selector (128 - 320 kbps) -->
+      <div>
+        <label>Audio bitrate (kbps)</label>
+        <select id="audio_bitrate">
+          <option value="128">128 kbps</option>
+          <option value="160">160 kbps</option>
+          <option value="192" selected>192 kbps</option>
+          <option value="256">256 kbps</option>
+          <option value="320">320 kbps</option>
+        </select>
+      </div>
+
       <div><label>Filename</label><input id="name" placeholder="My video"></div>
       <div class="full"><button id="goBtn" type="submit">⚡ Start Download</button></div>
     </div>
@@ -254,9 +278,13 @@ document.getElementById("frm").addEventListener("submit",async(e)=>{
   e.preventDefault();
   msg.textContent="⏳ Starting...";
   etaVal.textContent="--";
-  const url=urlIn.value.trim(),fmt=document.getElementById("format").value,name=document.getElementById("name").value.trim();
+  const url=urlIn.value.trim(),
+        fmt=document.getElementById("format").value,
+        name=document.getElementById("name").value.trim(),
+        video_res=document.getElementById("video_res").value,
+        audio_bitrate=document.getElementById("audio_bitrate").value;
   try{
-    const r=await fetch("/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url,format_choice:fmt,filename:name})});
+    const r=await fetch("/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url,format_choice:fmt,filename:name,video_res,audio_bitrate})});
     const j=await r.json();
     if(!r.ok)throw new Error(j.error||"Failed to start");
     job=j.job_id;poll();
@@ -359,41 +387,40 @@ class Job:
 
 YTDLP_URL_RE = re.compile(r"^https?://", re.I)
 
-def format_map_for_env():
-    """
-    Resolution-focused format selectors.
-    For high-res >1080 we won't force MP4; merging will use MKV (remux) to preserve original codecs.
-    """
-    if HAS_FFMPEG:
-        return {
-            "mp4_720":  "bestvideo[height<=720]+bestaudio/best",
-            "mp4_1080": "bestvideo[height<=1080]+bestaudio/best",
-            "mp4_1440": "bestvideo[height<=1440]+bestaudio/best",
-            "mp4_2160": "bestvideo[height<=2160]+bestaudio/best",
-            "audio_mp3": "bestaudio"
-        }
-    else:
-        # Without ffmpeg, we try to pick single-file mp4/webm where possible
-        return {
-            "mp4_720":  "best[height<=720][ext=mp4]/best[height<=720]",
-            "mp4_1080": "best[height<=1080][ext=mp4]/best[height<=1080]",
-            "mp4_1440": "best[height<=1440][ext=mp4]/best[height<=1440]",
-            "mp4_2160": "best[height<=2160][ext=mp4]/best[height<=2160]",
-            "audio_mp3": "bestaudio"
-        }
-
-def run_download(job, url, fmt_key, filename):
+def run_download(job, url, fmt_key, filename, video_res=None, audio_bitrate=None):
     try:
         if not YTDLP_URL_RE.match(url):
             job.status = "error"
             job.error = "Invalid URL"
             return
 
-        fmt = format_map_for_env().get(fmt_key)
-        if fmt is None:
-            job.status = "error"
-            job.error = "Format not supported"
-            return
+        # Normalize inputs
+        try:
+            video_res = int(video_res) if video_res else None
+        except Exception:
+            video_res = None
+        try:
+            audio_bitrate = int(audio_bitrate) if audio_bitrate else None
+        except Exception:
+            audio_bitrate = None
+
+        # choose format string based on requested type
+        if fmt_key == "audio":
+            # audio-only: best audio stream (we'll extract to mp3 later if ffmpeg present)
+            if HAS_FFMPEG:
+                fmt = "bestaudio/best"
+            else:
+                fmt = "bestaudio"
+        else:
+            # video: combine bestvideo up to chosen height + bestaudio
+            if video_res and HAS_FFMPEG:
+                fmt = f"bestvideo[height<={video_res}]+bestaudio/best"
+            elif video_res and not HAS_FFMPEG:
+                # prefer mp4 if possible without needing merge
+                fmt = f"best[height<={video_res}][ext=mp4]/best[height<={video_res}]"
+            else:
+                # fallback to a general best
+                fmt = "bestvideo+bestaudio/best" if HAS_FFMPEG else "best"
 
         def hook(d):
             try:
@@ -430,16 +457,34 @@ def run_download(job, url, fmt_key, filename):
         }
 
         if HAS_FFMPEG:
-            # Use MKV for high-res remux to preserve VP9/AV1 without re-encode
-            if fmt_key in ("mp4_1440", "mp4_2160"):
+            # merge/remux settings
+            # For <=1080 prefer mp4 container, otherwise keep default merging behavior
+            try:
+                if fmt_key != "audio":
+                    # choose mp4 for <=1080 to keep compatibility
+                    if video_res and int(video_res) <= 1080:
+                        opts["merge_output_format"] = "mp4"
+                    else:
+                        opts["merge_output_format"] = "mp4"
+                else:
+                    # audio extraction: we will run FFmpegExtractAudio to mp3
+                    opts["merge_output_format"] = "mp3"
+            except Exception:
                 opts["merge_output_format"] = "mp4"
-            else:
-                # keep mp4 for <=1080 (or you can choose mkv too)
-                opts["merge_output_format"] = "mp4"
-            opts["ffmpeg_location"] = ffmpeg_path()
-            if fmt_key == "audio_mp3":
-                opts["postprocessors"] = [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3"}]
 
+            opts["ffmpeg_location"] = ffmpeg_path()
+
+            if fmt_key == "audio":
+                # Add postprocessor to extract audio to mp3 with requested bitrate
+                pp = {"key": "FFmpegExtractAudio", "preferredcodec": "mp3"}
+                if audio_bitrate:
+                    # preferredquality expects string like "192"
+                    pp["preferredquality"] = str(audio_bitrate)
+                else:
+                    pp["preferredquality"] = "192"
+                opts["postprocessors"] = [pp]
+
+        # Run yt-dlp
         with YoutubeDL(opts) as y:
             y.extract_info(url, download=True)
 
@@ -456,7 +501,18 @@ def run_download(job, url, fmt_key, filename):
 def start():
     d = request.json or {}
     job = Job()
-    threading.Thread(target=run_download, args=(job, d.get("url", ""), d.get("format_choice", "mp4_2160"), d.get("filename")), daemon=True).start()
+    threading.Thread(
+        target=run_download,
+        args=(
+            job,
+            d.get("url", ""),
+            d.get("format_choice", "video"),
+            d.get("filename"),
+            d.get("video_res"),
+            d.get("audio_bitrate"),
+        ),
+        daemon=True,
+    ).start()
     return jsonify({"job_id": job.id})
 
 @app.post("/info")
