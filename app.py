@@ -116,7 +116,7 @@ header{
 }
 .card:hover{transform:translateY(-4px);box-shadow:0 14px 40px rgba(0,0,0,.6);}
 
-label{display:block;margin-bottom:6px;color:var(--muted);font-size:13px;}
+label{Display:block;margin-bottom:6px;color:var(--muted);font-size:13px;}
 input,select,button{
   width:100%;padding:12px 14px;border-radius:12px;
   border:1px solid rgba(255,255,255,0.07);
@@ -440,9 +440,12 @@ def run_download(job, url, fmt_key, filename, video_res=None, audio_bitrate=None
         except Exception:
             audio_bitrate = None
 
-        # choose format
+        # -------------------------
+        # CHANGED: strict audio format
+        # -------------------------
         if fmt_key == "audio":
-            fmt = "bestaudio/best"
+            # prefer m4a (smaller, audio-only), then fallback to bestaudio
+            fmt = "bestaudio[ext=m4a]/bestaudio/best"
         else:
             fmt = _build_video_format(video_res)
 
@@ -463,24 +466,17 @@ def run_download(job, url, fmt_key, filename, video_res=None, audio_bitrate=None
             except Exception:
                 pass
 
-        # Decide base filename: user provided filename else yt-dlp template
+        # filename/template handling (same as before)
         base_template = (filename.strip() if filename else "%(title)s").rstrip(".")
-        # If yt-dlp template used, it will be replaced when extract_info runs; but we still sanitize the given name.
-        # We will include APP_PREFIX + '__' + sanitized base as output template.
-        # sanitize the provided filename (if it contains template tokens, leave them so yt-dlp can substitute)
         if "%(" in base_template and ")" in base_template:
-            # user used template tokens, keep as-is but ensure no unsafe literal chars outside tokens
-            # replace forbidden chars except inside %(...) tokens
             def _replace_outside_tokens(s):
                 out = []
                 i = 0
                 while i < len(s):
                     if s[i] == '%' and i+1 < len(s) and s[i+1] == '(':
-                        # copy until closing ')'
                         j = i+2
                         while j < len(s) and s[j] != ')':
                             j += 1
-                        # include token as-is (if no closing, just copy rest)
                         if j < len(s):
                             out.append(s[i:j+1])
                             i = j+1
@@ -492,15 +488,12 @@ def run_download(job, url, fmt_key, filename, video_res=None, audio_bitrate=None
                         out.append(s[i])
                         i += 1
                 joined = "".join(out)
-                # now sanitize forbidden chars in the joined string (this will also sanitize inside tokens if any remained - but tokens are preserved above)
                 return _FILENAME_SANITIZE_RE.sub("_", joined)
             safe_base = _replace_outside_tokens(base_template)
         else:
             safe_base = sanitize_filename(base_template)
 
-        # Construct final outtmpl: prefix + '__' + safe_base + .%(ext)s
         prefix = APP_PREFIX.strip() or "Hyper_Downloader"
-        # sanitize prefix too (avoid accidental bad chars)
         prefix_safe = _FILENAME_SANITIZE_RE.sub("_", prefix)
         outtmpl_base = f"{prefix_safe}__{safe_base}"
         outtmpl = os.path.join(job.tmp, outtmpl_base + ".%(ext)s")
@@ -520,9 +513,23 @@ def run_download(job, url, fmt_key, filename, video_res=None, audio_bitrate=None
         if DEBUG_LOG:
             opts["verbose"] = True
 
-        if HAS_FFMPEG:
-            opts["ffmpeg_location"] = ffmpeg_path()
-            if fmt_key != "audio":
+        # -------------------------
+        # AUDIO: add postprocessor to extract mp3, and DO NOT set merge_output_format
+        # -------------------------
+        if fmt_key == "audio":
+            # Require ffmpeg for MP3 extraction. If not present, yt-dlp will still download audio in original container (m4a/webm)
+            if HAS_FFMPEG:
+                pp = {"key": "FFmpegExtractAudio", "preferredcodec": "mp3"}
+                pp["preferredquality"] = str(audio_bitrate) if audio_bitrate else "192"
+                opts["postprocessors"] = [pp]
+                # do NOT set merge_output_format for audio mode — avoid creating a merged video container
+            else:
+                # No ffmpeg: still prefer audio-only streams (m4a/webm). user will get .m4a/.webm as downloaded ext
+                pass
+        else:
+            # video path (keep existing behavior)
+            if HAS_FFMPEG:
+                opts["ffmpeg_location"] = ffmpeg_path()
                 try:
                     if video_res and int(video_res) <= 1080:
                         opts["merge_output_format"] = "mp4"
@@ -531,9 +538,8 @@ def run_download(job, url, fmt_key, filename, video_res=None, audio_bitrate=None
                 except Exception:
                     opts["merge_output_format"] = "mp4"
             else:
-                pp = {"key": "FFmpegExtractAudio", "preferredcodec": "mp3"}
-                pp["preferredquality"] = str(audio_bitrate) if audio_bitrate else "192"
-                opts["postprocessors"] = [pp]
+                # no ffmpeg: leave merge options unset
+                pass
 
         # Run yt-dlp
         try:
@@ -657,3 +663,4 @@ def home():
 if __name__ == "__main__":
     print("Starting app on port", PORT, "ffmpeg:", HAS_FFMPEG, "DEBUG_LOG:", DEBUG_LOG, "PREFIX:", APP_PREFIX)
     app.run(host="0.0.0.0", port=PORT)
+ 
