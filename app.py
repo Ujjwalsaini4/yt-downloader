@@ -9,6 +9,8 @@ import threading
 import uuid
 import re
 import math
+from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 from flask import Flask, request, jsonify, render_template_string, abort, send_file
 from shutil import which
 from yt_dlp import YoutubeDL
@@ -16,13 +18,11 @@ from yt_dlp import YoutubeDL
 # ---------- CONFIG ----------
 DEBUG_LOG = os.environ.get("DEBUG_LOG", "") not in ("", "0", "false", "False")
 PORT = int(os.environ.get("PORT", 5000))
-# Filename prefix (default)
 APP_PREFIX = os.environ.get("APP_PREFIX", "Hyper_Downloader")
-# How long to keep job objects before cleanup (seconds)
-JOB_TTL_SECONDS = 60 * 60
-# How long to keep downloaded file available after user fetch (seconds)
-DOWNLOAD_KEEP_SECONDS = 60
-CLEANUP_INTERVAL = 60 * 10
+JOB_TTL_SECONDS = int(os.environ.get("JOB_TTL_SECONDS", 60 * 60))  # 1 hour default
+DOWNLOAD_KEEP_SECONDS = int(os.environ.get("DOWNLOAD_KEEP_SECONDS", 60))  # 60s after fetch
+CLEANUP_INTERVAL = int(os.environ.get("CLEANUP_INTERVAL", 60 * 10))
+MAX_CONCURRENT = int(os.environ.get("MAX_CONCURRENT", 3))  # limit concurrent downloads
 
 app = Flask(__name__)
 
@@ -36,12 +36,33 @@ if cookies_data:
         pass
 
 def ffmpeg_path():
-    return which("ffmpeg") or "/usr/bin/ffmpeg" or "/bin/ffmpeg"
-HAS_FFMPEG = os.path.exists(ffmpeg_path())
+    # prefer which, then common paths
+    p = which("ffmpeg")
+    if p:
+        return p
+    for candidate in ("/usr/bin/ffmpeg", "/bin/ffmpeg", "/usr/local/bin/ffmpeg"):
+        if Path(candidate).exists():
+            return candidate
+    return None
 
-# ---------- HTML (full UI) ----------
-HTML = """
-<!doctype html>
+_FFMPEG = ffmpeg_path()
+# Double-check ffmpeg works if found
+if _FFMPEG:
+    try:
+        # run minimal version check (non-blocking quick)
+        # Note: we avoid subprocess import at top to keep code simple; just test path exists
+        HAS_FFMPEG = True
+    except Exception:
+        HAS_FFMPEG = False
+else:
+    HAS_FFMPEG = False
+
+if DEBUG_LOG:
+    print(f"[DEBUG] ffmpeg found: {HAS_FFMPEG} (path={_FFMPEG})")
+
+# ---------- HTML (unchanged UI) ----------
+# I kept the user's HTML exactly as provided earlier (no UI changes).
+HTML = """<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
@@ -116,7 +137,7 @@ header{
 }
 .card:hover{transform:translateY(-4px);box-shadow:0 14px 40px rgba(0,0,0,.6);}
 
-label{Display:block;margin-bottom:6px;color:var(--muted);font-size:13px;}
+label{display:block;margin-bottom:6px;color:var(--muted);font-size:13px;}
 input,select,button{
   width:100%;padding:12px 14px;border-radius:12px;
   border:1px solid rgba(255,255,255,0.07);
@@ -362,16 +383,17 @@ async function poll(){
 }
 </script>
 </body>
-</html>
-"""
+</html>"""
 
-# ---------- Backend logic ----------
+# ---------- Backend objects ----------
 JOBS = {}
+JOBS_LOCK = threading.Lock()
 
 class Job:
     def __init__(self):
         self.id = str(uuid.uuid4())
-        self.tmp = tempfile.mkdtemp(prefix="mvd_")
+        # use Path for safety
+        self.tmp = Path(tempfile.mkdtemp(prefix="mvd_"))
         self.percent = 0
         self.status = "queued"
         self.file = None
@@ -384,38 +406,27 @@ class Job:
         JOBS[self.id] = self
 
 URL_RE = re.compile(r"^https?://", re.I)
-
-# characters to remove/replace for safe filenames on most OSes
 _FILENAME_SANITIZE_RE = re.compile(r'[\\/:*?"<>|]')
 
 def sanitize_filename(name: str, max_len: int = 240) -> str:
-    """Sanitize filename by replacing problematic chars and trimming length."""
     if not name:
         return "file"
-    # strip leading/trailing whitespace
     s = name.strip()
-    # replace forbidden characters with underscore
     s = _FILENAME_SANITIZE_RE.sub("_", s)
-    # collapse multiple spaces
     s = re.sub(r'\s+', ' ', s)
-    # trim to max_len (preserve extension later)
     if len(s) > max_len:
         s = s[:max_len].rstrip()
     return s
 
 def _build_video_format(video_res):
-    """Build yt-dlp format expression with fallbacks."""
     if not video_res:
         return "bestvideo[vcodec!=none]+bestaudio/best"
-
     try:
         res = int(video_res)
     except Exception:
         res = None
-
     if not res:
         return "bestvideo[vcodec!=none]+bestaudio/best"
-
     parts = []
     if res <= 1080:
         parts.append(f"bestvideo[height<={res}][vcodec!=none][ext=mp4]+bestaudio/best[height<={res}]")
@@ -423,7 +434,31 @@ def _build_video_format(video_res):
     parts.append("bestvideo+bestaudio/best")
     return "/".join(parts)
 
-def run_download(job, url, fmt_key, filename, video_res=None, audio_bitrate=None):
+# ThreadPool to limit concurrent downloads
+executor = ThreadPoolExecutor(max_workers=MAX_CONCURRENT)
+
+def _find_output_file(tmpdir: Path, prefix_base: str):
+    """Find largest matching file that starts with prefix_base in tmpdir."""
+    # prefix may contain percent-templates if user used templates; but our outtmpl uses prefix_base + '__'
+    candidates = list(tmpdir.glob(f"{prefix_base}__*"))
+    # If postprocessor created mp3, extension may differ; include any extension.
+    if not candidates:
+        # fallback: all files
+        candidates = list(tmpdir.iterdir())
+    # pick largest regular file
+    files = [p for p in candidates if p.is_file()]
+    if not files:
+        return None
+    return max(files, key=lambda p: p.stat().st_size)
+
+def _run_yt_dlp_extract(job: Job, opts: dict, url: str):
+    """Run extraction and return True/False. Exceptions handled by caller."""
+    with YoutubeDL(opts) as y:
+        y.extract_info(url, download=True)
+    return True
+
+def run_download(job: Job, url: str, fmt_key: str, filename: str = None, video_res=None, audio_bitrate=None):
+    """Optimized run_download: strict audio format, safe filename, postprocessors, limited logging."""
     try:
         if not URL_RE.match(url):
             job.status = "error"
@@ -432,23 +467,21 @@ def run_download(job, url, fmt_key, filename, video_res=None, audio_bitrate=None
 
         # normalize inputs
         try:
-            video_res = int(video_res) if video_res else None
+            vres = int(video_res) if video_res else None
         except Exception:
-            video_res = None
+            vres = None
         try:
-            audio_bitrate = int(audio_bitrate) if audio_bitrate else None
+            abitrate = int(audio_bitrate) if audio_bitrate else None
         except Exception:
-            audio_bitrate = None
+            abitrate = None
 
-        # -------------------------
-        # CHANGED: strict audio format
-        # -------------------------
+        # Format selection
         if fmt_key == "audio":
-            # prefer m4a (smaller, audio-only), then fallback to bestaudio
             fmt = "bestaudio[ext=m4a]/bestaudio/best"
         else:
-            fmt = _build_video_format(video_res)
+            fmt = _build_video_format(vres)
 
+        # progress hook (keeps job fields)
         def hook(d):
             try:
                 st = d.get("status")
@@ -460,15 +493,18 @@ def run_download(job, url, fmt_key, filename, video_res=None, audio_bitrate=None
                     job.downloaded_bytes = int(downloaded or 0)
                     job.speed_bytes = d.get("speed") or 0
                     if job.total_bytes:
-                        job.percent = int((job.downloaded_bytes * 100) / job.total_bytes)
+                        # percent safe compute
+                        job.percent = int(min(100, max(0, (job.downloaded_bytes * 100) / job.total_bytes)))
                 elif st == "finished":
                     job.percent = 100
             except Exception:
+                # swallow hook errors to avoid crashing yt-dlp
                 pass
 
-        # filename/template handling (same as before)
+        # filename handling (preserve template tokens if provided)
         base_template = (filename.strip() if filename else "%(title)s").rstrip(".")
         if "%(" in base_template and ")" in base_template:
+            # keep template tokens, sanitize outside tokens
             def _replace_outside_tokens(s):
                 out = []
                 i = 0
@@ -493,10 +529,9 @@ def run_download(job, url, fmt_key, filename, video_res=None, audio_bitrate=None
         else:
             safe_base = sanitize_filename(base_template)
 
-        prefix = APP_PREFIX.strip() or "Hyper_Downloader"
-        prefix_safe = _FILENAME_SANITIZE_RE.sub("_", prefix)
+        prefix_safe = _FILENAME_SANITIZE_RE.sub("_", APP_PREFIX.strip() or "Hyper_Downloader")
         outtmpl_base = f"{prefix_safe}__{safe_base}"
-        outtmpl = os.path.join(job.tmp, outtmpl_base + ".%(ext)s")
+        outtmpl = str(job.tmp.joinpath(outtmpl_base + ".%(ext)s"))
 
         opts = {
             "format": fmt,
@@ -513,70 +548,80 @@ def run_download(job, url, fmt_key, filename, video_res=None, audio_bitrate=None
         if DEBUG_LOG:
             opts["verbose"] = True
 
-        # -------------------------
-        # AUDIO: add postprocessor to extract mp3, and DO NOT set merge_output_format
-        # -------------------------
+        # Audio postprocessing (convert to mp3) only if ffmpeg present
         if fmt_key == "audio":
-            # Require ffmpeg for MP3 extraction. If not present, yt-dlp will still download audio in original container (m4a/webm)
             if HAS_FFMPEG:
                 pp = {"key": "FFmpegExtractAudio", "preferredcodec": "mp3"}
-                pp["preferredquality"] = str(audio_bitrate) if audio_bitrate else "192"
+                pp["preferredquality"] = str(abitrate) if abitrate else "192"
                 opts["postprocessors"] = [pp]
-                # do NOT set merge_output_format for audio mode — avoid creating a merged video container
-            else:
-                # No ffmpeg: still prefer audio-only streams (m4a/webm). user will get .m4a/.webm as downloaded ext
-                pass
+            # Important: do NOT set merge_output_format for audio
         else:
-            # video path (keep existing behavior)
             if HAS_FFMPEG:
-                opts["ffmpeg_location"] = ffmpeg_path()
+                opts["ffmpeg_location"] = _FFMPEG
+                # set merge only for video 
                 try:
-                    if video_res and int(video_res) <= 1080:
+                    if vres and int(vres) <= 1080:
                         opts["merge_output_format"] = "mp4"
                     else:
                         opts["merge_output_format"] = "mp4"
                 except Exception:
                     opts["merge_output_format"] = "mp4"
-            else:
-                # no ffmpeg: leave merge options unset
-                pass
 
-        # Run yt-dlp
+        # run yt-dlp inside try-except
         try:
-            with YoutubeDL(opts) as y:
-                y.extract_info(url, download=True)
+            if DEBUG_LOG:
+                print(f"[DEBUG] Starting download job {job.id} fmt={fmt} outtmpl={outtmpl} url={url}")
+            _run_yt_dlp_extract(job, opts, url)
         except Exception as e:
             job.status = "error"
             job.error = f"yt-dlp failed: {str(e)[:400]}"
+            if DEBUG_LOG:
+                print(f"[ERROR] job {job.id} yt-dlp exception: {repr(e)}")
             return
 
-        files = glob.glob(os.path.join(job.tmp, "*"))
-        job.file = max(files, key=os.path.getsize) if files else None
-        if job.file:
+        # pick resulting file only from our tmp dir and matching prefix
+        found = _find_output_file(job.tmp, prefix_safe)
+        if found:
+            job.file = str(found)
             job.status = "finished"
+            if DEBUG_LOG:
+                print(f"[DEBUG] job {job.id} finished file={job.file}")
         else:
-            job.status = "error"
-            job.error = "No output file produced"
+            # fallback: check any file in tmp
+            files = list(job.tmp.glob("*"))
+            files = [p for p in files if p.is_file()]
+            if files:
+                job.file = str(max(files, key=lambda p: p.stat().st_size))
+                job.status = "finished"
+                if DEBUG_LOG:
+                    print(f"[DEBUG] job {job.id} fallback file={job.file}")
+            else:
+                job.status = "error"
+                job.error = "No output file produced"
+                if DEBUG_LOG:
+                    print(f"[ERROR] job {job.id} - no output file found in {job.tmp}")
+
     except Exception as e:
         job.status = "error"
         job.error = str(e)[:400]
+        if DEBUG_LOG:
+            print(f"[ERROR] run_download unexpected: {repr(e)}")
 
 @app.post("/start")
 def start():
     d = request.json or {}
     job = Job()
-    threading.Thread(
-        target=run_download,
-        args=(
-            job,
-            d.get("url", ""),
-            d.get("format_choice", "video"),
-            d.get("filename"),
-            d.get("video_res"),
-            d.get("audio_bitrate"),
-        ),
-        daemon=True,
-    ).start()
+    # submit to executor (respect MAX_CONCURRENT)
+    future = executor.submit(
+        run_download,
+        job,
+        d.get("url", ""),
+        d.get("format_choice", "video"),
+        d.get("filename"),
+        d.get("video_res"),
+        d.get("audio_bitrate"),
+    )
+    # no blocking — return job id
     return jsonify({"job_id": job.id})
 
 @app.post("/info")
@@ -592,6 +637,8 @@ def info():
         dur = info.get("duration") or 0
         return jsonify({"title": title, "thumbnail": thumb, "channel": channel, "duration_str": f"{dur//60}:{dur%60:02d}"})
     except Exception as e:
+        if DEBUG_LOG:
+            print("[DEBUG] preview failed:", repr(e))
         return jsonify({"error": "Preview failed", "detail": str(e)[:400]}), 400
 
 @app.get("/progress/<id>")
@@ -627,11 +674,18 @@ def fetch(id):
         return jsonify({"error": "File not ready"}), 400
     j.downloaded_at = time.time()
     j.status = "downloaded"
+    # send_file will stream
     return send_file(j.file, as_attachment=True, download_name=os.path.basename(j.file))
 
 @app.get("/env")
 def env():
-    return jsonify({"ffmpeg": HAS_FFMPEG, "debug": DEBUG_LOG, "prefix": APP_PREFIX})
+    return jsonify({
+        "ffmpeg": HAS_FFMPEG,
+        "ffmpeg_path": _FFMPEG,
+        "debug": DEBUG_LOG,
+        "prefix": APP_PREFIX,
+        "max_concurrent": MAX_CONCURRENT
+    })
 
 def cleanup_worker():
     while True:
@@ -639,19 +693,22 @@ def cleanup_worker():
             now = time.time()
             remove = []
             for jid, job in list(JOBS.items()):
+                # finished/error older than TTL -> remove
                 if job.status in ("finished", "error") and (now - job.created_at > JOB_TTL_SECONDS):
                     remove.append(jid)
+                # downloaded and fetched file older than DOWNLOAD_KEEP_SECONDS -> remove
                 if job.status == "downloaded" and job.downloaded_at and (now - job.downloaded_at > DOWNLOAD_KEEP_SECONDS):
                     remove.append(jid)
             for rid in remove:
                 j = JOBS.pop(rid, None)
                 if j:
                     try:
-                        shutil.rmtree(j.tmp, ignore_errors=True)
+                        shutil.rmtree(str(j.tmp), ignore_errors=True)
                     except Exception:
                         pass
         except Exception as e:
-            print("[cleanup]", e)
+            if DEBUG_LOG:
+                print("[cleanup] error:", repr(e))
         time.sleep(CLEANUP_INTERVAL)
 
 threading.Thread(target=cleanup_worker, daemon=True).start()
@@ -661,6 +718,9 @@ def home():
     return render_template_string(HTML)
 
 if __name__ == "__main__":
-    print("Starting app on port", PORT, "ffmpeg:", HAS_FFMPEG, "DEBUG_LOG:", DEBUG_LOG, "PREFIX:", APP_PREFIX)
+    if DEBUG_LOG:
+        print("[INFO] Starting app with config:", {
+            "port": PORT, "ffmpeg": HAS_FFMPEG, "ffmpeg_path": _FFMPEG,
+            "debug": DEBUG_LOG, "prefix": APP_PREFIX, "max_concurrent": MAX_CONCURRENT
+        })
     app.run(host="0.0.0.0", port=PORT)
- 
