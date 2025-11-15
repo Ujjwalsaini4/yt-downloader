@@ -40,7 +40,7 @@ def ffmpeg_path():
 HAS_FFMPEG = os.path.exists(ffmpeg_path())
 
 # ---------- HTML (full UI) ----------
-HTML = r"""
+HTML = """
 <!doctype html>
 <html lang="en">
 <head>
@@ -132,7 +132,7 @@ button{
 button:active{transform:scale(.98);}
 button[disabled]{opacity:.6;cursor:not-allowed;}
 
-.grid{display:grid;gap:12px;}
+.grid{display:grid;gap:12px;margin:10px 0px;}
 @media(min-width:700px){.grid{grid-template-columns:2fr 1fr 1.2fr auto;align-items:end;}}
 .full{grid-column:1/-1;}
 
@@ -202,7 +202,7 @@ footer{margin-top:20px;text-align:center;color:var(--muted);font-size:12px;}
 </header>
 
 <main class="card">
-  <h2>⬇️ Download from YouTube</h2>
+  <h2>📥 Download from YouTube</h2>
   <p class="small">Paste your link, select format, and start. Progress and speed show in real-time.</p>
 
   <div id="preview" class="preview">
