@@ -8,23 +8,36 @@ import glob
 import threading
 import uuid
 import re
+import math
 from flask import Flask, request, jsonify, render_template_string, abort, send_file
 from shutil import which
 from yt_dlp import YoutubeDL
+
+# ---------- CONFIG ----------
+DEBUG_LOG = os.environ.get("DEBUG_LOG", "") not in ("", "0", "false", "False")
+PORT = int(os.environ.get("PORT", 5000))
+# How long to keep job objects before cleanup (seconds)
+JOB_TTL_SECONDS = 60 * 60
+# How long to keep downloaded file available after user fetch (seconds)
+DOWNLOAD_KEEP_SECONDS = 60
+CLEANUP_INTERVAL = 60 * 10
 
 app = Flask(__name__)
 
 # Save cookies if present (from environment)
 cookies_data = os.environ.get("COOKIES_TEXT", "").strip()
 if cookies_data:
-    with open("cookies.txt", "w", encoding="utf-8") as f:
-        f.write(cookies_data)
+    try:
+        with open("cookies.txt", "w", encoding="utf-8") as f:
+            f.write(cookies_data)
+    except Exception:
+        pass
 
 def ffmpeg_path():
-    return which("ffmpeg") or "/usr/bin/ffmpeg"
+    return which("ffmpeg") or "/usr/bin/ffmpeg" or "/bin/ffmpeg"
 HAS_FFMPEG = os.path.exists(ffmpeg_path())
 
-# ---------- HTML (UI kept as requested) ----------
+# ---------- HTML (full UI) ----------
 HTML = r"""
 <!doctype html>
 <html lang="en">
@@ -35,7 +48,6 @@ HTML = r"""
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
 <style>
-/* (styles unchanged - same as your original) */
 :root{
   --bg:#050b16;
   --card:#0a162b;
@@ -63,7 +75,6 @@ h1,h2{margin:0;font-weight:800;}
 h2{font-size:22px;}
 .small{font-size:13px;color:var(--muted);}
 
-/* Header */
 header{
   display:flex;align-items:center;justify-content:space-between;
   background:rgba(255,255,255,0.02);
@@ -80,20 +91,18 @@ header{
   color:#fff;font-weight:800;font-size:18px;
   box-shadow:0 8px 24px rgba(6,182,212,.25);
 }
-/* gentle background pulse for subtle shine */
+.logo { animation: bgPulse 8s ease-in-out infinite; }
 @keyframes bgPulse {
   0% { filter: hue-rotate(0deg) saturate(100%); }
   50% { filter: hue-rotate(8deg) saturate(110%); }
   100% { filter: hue-rotate(0deg) saturate(100%); }
 }
-.logo { animation: bgPulse 8s ease-in-out infinite; }
 .brand-title span{
   background:var(--accent);
   -webkit-background-clip:text;
   color:transparent;
 }
 
-/* Card */
 .card{
   background:rgba(255,255,255,0.02);
   border:1px solid rgba(255,255,255,0.05);
@@ -105,7 +114,6 @@ header{
 }
 .card:hover{transform:translateY(-4px);box-shadow:0 14px 40px rgba(0,0,0,.6);}
 
-/* Form */
 label{display:block;margin-bottom:6px;color:var(--muted);font-size:13px;}
 input,select,button{
   width:100%;padding:12px 14px;border-radius:12px;
@@ -122,12 +130,10 @@ button{
 button:active{transform:scale(.98);}
 button[disabled]{opacity:.6;cursor:not-allowed;}
 
-/* Grid responsive */
 .grid{display:grid;gap:12px;}
 @media(min-width:700px){.grid{grid-template-columns:2fr 1fr 1.2fr auto;align-items:end;}}
 .full{grid-column:1/-1;}
 
-/* Progress bar */
 .progress{
   margin-top:14px;height:14px;border-radius:999px;
   background:rgba(255,255,255,0.04);
@@ -145,8 +151,6 @@ button[disabled]{opacity:.6;cursor:not-allowed;}
   color:#fff;font-weight:700;font-size:13px;
   text-shadow:0 1px 2px rgba(0,0,0,0.5);
 }
-
-/* sheen overlay on progress */
 .bar::after{
   content:"";
   position:absolute;inset:0;
@@ -155,8 +159,6 @@ button[disabled]{opacity:.6;cursor:not-allowed;}
   animation: sheen 2.4s linear infinite;
 }
 @keyframes sheen{100%{transform:translateX(120%)}}
-
-/* Status row: message left, ETA pill right */
 .status-row{
   display:flex;align-items:center;justify-content:space-between;margin-top:10px;gap:12px;
 }
@@ -167,11 +169,9 @@ button[disabled]{opacity:.6;cursor:not-allowed;}
   min-width:90px;justify-content:center;
   box-shadow:0 6px 18px rgba(6,182,212,0.06);
 }
-/* make ETA number monospaced-ish */
 .eta-pill .label{opacity:0.85;color:var(--muted);font-weight:600;font-size:12px;margin-right:6px}
 .eta-pill .value{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Roboto Mono,monospace;font-weight:800}
 
-/* Preview */
 .preview{
   display:none;margin-top:10px;padding:10px;
   background:rgba(255,255,255,0.02);
@@ -184,7 +184,6 @@ button[disabled]{opacity:.6;cursor:not-allowed;}
 .meta .sub{color:var(--muted);font-size:13px;margin-top:4px;}
 
 footer{margin-top:20px;text-align:center;color:var(--muted);font-size:12px;}
-/* responsive tweaks */
 @media(max-width:520px){
   .eta-pill{min-width:72px;padding:6px 10px;font-size:12px}
   .brand-title h1{font-size:18px}
@@ -224,7 +223,7 @@ footer{margin-top:20px;text-align:center;color:var(--muted);font-size:12px;}
         </select>
       </div>
 
-      <!-- New: Video quality selector (144 - 1080) -->
+      <!-- Video quality selector -->
       <div>
         <label>Video quality</label>
         <select id="video_res">
@@ -237,7 +236,7 @@ footer{margin-top:20px;text-align:center;color:var(--muted);font-size:12px;}
         </select>
       </div>
 
-      <!-- New: Audio bitrate selector (128 - 320 kbps) -->
+      <!-- Audio bitrate selector -->
       <div>
         <label>Audio bitrate (kbps)</label>
         <select id="audio_bitrate">
@@ -256,7 +255,6 @@ footer{margin-top:20px;text-align:center;color:var(--muted);font-size:12px;}
 
   <div class="progress"><div id="bar" class="bar"></div><div id="pct" class="pct">0%</div></div>
 
-  <!-- status row: left = message, right = ETA pill -->
   <div class="status-row" aria-live="polite">
     <div id="msg" class="status-left">—</div>
     <div id="eta" class="eta-pill"><span class="label">ETA:</span><span class="value">--</span></div>
@@ -334,9 +332,8 @@ async function poll(){
 
     if(p.status==="finished"){msg.textContent="✅ Preparing file...";}
     else if(p.status==="error"){msg.textContent="❌ "+(p.error||"Download failed");}
-    else msg.textContent = p.status==="downloaded" ? "✅ Download complete (fetching file)..." : "Downloading…";
+    else msg.textContent = p.status==="downloaded" ? "✅ Download complete (fetching file)..." : p.status || "Downloading…";
 
-    // ETA preference: server-provided -> client-calc fallback
     let etaText="--";
     if(typeof p.eta_seconds !== "undefined" && p.eta_seconds !== null){
       etaText = formatSeconds(p.eta_seconds);
@@ -366,7 +363,7 @@ async function poll(){
 </html>
 """
 
-# ---------- Backend ----------
+# ---------- Backend logic ----------
 JOBS = {}
 
 class Job:
@@ -380,21 +377,45 @@ class Job:
         self.speed_bytes = 0.0
         self.created_at = time.time()
         self.downloaded_at = None
-        # fields to support ETA calculation
         self.total_bytes = 0
         self.downloaded_bytes = 0
         JOBS[self.id] = self
 
-YTDLP_URL_RE = re.compile(r"^https?://", re.I)
+URL_RE = re.compile(r"^https?://", re.I)
+
+def _build_video_format(video_res):
+    """Build yt-dlp format expression with fallbacks.
+    Prefer exact height <= video_res, avoid audio-only video, prefer mp4 for <=1080.
+    """
+    if not video_res:
+        return "bestvideo[vcodec!=none]+bestaudio/best"
+
+    try:
+        res = int(video_res)
+    except Exception:
+        res = None
+
+    if not res:
+        return "bestvideo[vcodec!=none]+bestaudio/best"
+
+    parts = []
+    # 1) prefer mp4 video with height<=RES + bestaudio or best with height limit
+    if res <= 1080:
+        parts.append(f"bestvideo[height<={res}][vcodec!=none][ext=mp4]+bestaudio/best[height<={res}]")
+    # 2) general bestvideo with height limit + bestaudio
+    parts.append(f"bestvideo[height<={res}][vcodec!=none]+bestaudio")
+    # 3) fallback to letting yt-dlp pick
+    parts.append("bestvideo+bestaudio/best")
+    return "/".join(parts)
 
 def run_download(job, url, fmt_key, filename, video_res=None, audio_bitrate=None):
     try:
-        if not YTDLP_URL_RE.match(url):
+        if not URL_RE.match(url):
             job.status = "error"
             job.error = "Invalid URL"
             return
 
-        # Normalize inputs
+        # normalize
         try:
             video_res = int(video_res) if video_res else None
         except Exception:
@@ -404,23 +425,11 @@ def run_download(job, url, fmt_key, filename, video_res=None, audio_bitrate=None
         except Exception:
             audio_bitrate = None
 
-        # choose format string based on requested type
+        # choose format
         if fmt_key == "audio":
-            # audio-only: best audio stream (we'll extract to mp3 later if ffmpeg present)
-            if HAS_FFMPEG:
-                fmt = "bestaudio/best"
-            else:
-                fmt = "bestaudio"
+            fmt = "bestaudio/best"
         else:
-            # video: combine bestvideo up to chosen height + bestaudio
-            if video_res and HAS_FFMPEG:
-                fmt = f"bestvideo[height<={video_res}]+bestaudio/best"
-            elif video_res and not HAS_FFMPEG:
-                # prefer mp4 if possible without needing merge
-                fmt = f"best[height<={video_res}][ext=mp4]/best[height<={video_res}]"
-            else:
-                # fallback to a general best
-                fmt = "bestvideo+bestaudio/best" if HAS_FFMPEG else "best"
+            fmt = _build_video_format(video_res)
 
         def hook(d):
             try:
@@ -440,59 +449,60 @@ def run_download(job, url, fmt_key, filename, video_res=None, audio_bitrate=None
                 pass
 
         base = (filename.strip() if filename else "%(title)s").rstrip(".")
-        # include job id in name to avoid collisions
         safe_base = f"{job.id}__{base}"
-        out = os.path.join(job.tmp, safe_base + ".%(ext)s")
+        outtmpl = os.path.join(job.tmp, safe_base + ".%(ext)s")
 
         opts = {
             "format": fmt,
-            "outtmpl": out,
+            "outtmpl": outtmpl,
             "progress_hooks": [hook],
-            "quiet": True,
+            "quiet": not DEBUG_LOG,
             "no_warnings": True,
             "noplaylist": True,
             "retries": 3,
             "socket_timeout": 30,
             "cookiefile": "cookies.txt",
+            # reduce console spam when not debugging
         }
 
+        if DEBUG_LOG:
+            # include verbose debug info in extraction to stdout
+            opts["verbose"] = True
+
         if HAS_FFMPEG:
-            # merge/remux settings
-            # For <=1080 prefer mp4 container, otherwise keep default merging behavior
-            try:
-                if fmt_key != "audio":
-                    # choose mp4 for <=1080 to keep compatibility
+            opts["ffmpeg_location"] = ffmpeg_path()
+            if fmt_key != "audio":
+                try:
                     if video_res and int(video_res) <= 1080:
                         opts["merge_output_format"] = "mp4"
                     else:
                         opts["merge_output_format"] = "mp4"
-                else:
-                    # audio extraction: we will run FFmpegExtractAudio to mp3
-                    opts["merge_output_format"] = "mp3"
-            except Exception:
-                opts["merge_output_format"] = "mp4"
-
-            opts["ffmpeg_location"] = ffmpeg_path()
-
-            if fmt_key == "audio":
-                # Add postprocessor to extract audio to mp3 with requested bitrate
+                except Exception:
+                    opts["merge_output_format"] = "mp4"
+            else:
+                # postprocessor for MP3 extraction with chosen bitrate
                 pp = {"key": "FFmpegExtractAudio", "preferredcodec": "mp3"}
-                if audio_bitrate:
-                    # preferredquality expects string like "192"
-                    pp["preferredquality"] = str(audio_bitrate)
-                else:
-                    pp["preferredquality"] = "192"
+                pp["preferredquality"] = str(audio_bitrate) if audio_bitrate else "192"
                 opts["postprocessors"] = [pp]
 
         # Run yt-dlp
-        with YoutubeDL(opts) as y:
-            y.extract_info(url, download=True)
+        try:
+            with YoutubeDL(opts) as y:
+                # If debug on, log chosen format info to job.error temporarily so user can fetch logs
+                info = y.extract_info(url, download=True)
+        except Exception as e:
+            job.status = "error"
+            job.error = f"yt-dlp failed: {str(e)[:400]}"
+            return
 
+        # find largest file in temp dir as output
         files = glob.glob(os.path.join(job.tmp, "*"))
         job.file = max(files, key=os.path.getsize) if files else None
-        job.status = "finished" if job.file else "error"
-        if not job.file and job.status == "error":
-            job.error = job.error or "No output file produced"
+        if job.file:
+            job.status = "finished"
+        else:
+            job.status = "error"
+            job.error = "No output file produced"
     except Exception as e:
         job.status = "error"
         job.error = str(e)[:400]
@@ -536,7 +546,6 @@ def progress(id):
     if not j:
         abort(404)
     speed_b = getattr(j, "speed_bytes", 0) or 0
-    speed_mbps = round((speed_b * 8) / 1_000_000, 1) if speed_b and speed_b > 0 else 0.0
     eta_seconds = None
     downloaded = getattr(j, "downloaded_bytes", 0) or 0
     total = getattr(j, "total_bytes", 0) or 0
@@ -550,7 +559,6 @@ def progress(id):
         "status": j.status,
         "error": j.error,
         "speed_bytes": speed_b,
-        "speed_mbps": speed_mbps,
         "downloaded_bytes": downloaded,
         "total_bytes": total,
         "eta_seconds": eta_seconds
@@ -569,12 +577,7 @@ def fetch(id):
 
 @app.get("/env")
 def env():
-    return jsonify({"ffmpeg": HAS_FFMPEG})
-
-# Cleanup worker (auto-clean)
-CLEANUP_INTERVAL = 60 * 10
-JOB_TTL_SECONDS = 60 * 60      # remove finished/error jobs older than 1 hour
-DOWNLOAD_KEEP_SECONDS = 60     # after user downloads file, remove from server after 60s
+    return jsonify({"ffmpeg": HAS_FFMPEG, "debug": DEBUG_LOG})
 
 def cleanup_worker():
     while True:
@@ -604,4 +607,6 @@ def home():
     return render_template_string(HTML)
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    print("Starting app on port", PORT, "ffmpeg:", HAS_FFMPEG, "DEBUG_LOG:", DEBUG_LOG)
+    app.run(host="0.0.0.0", port=PORT)
+     
