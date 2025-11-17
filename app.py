@@ -241,18 +241,18 @@ footer{margin-top:20px;text-align:center;color:var(--muted);font-size:12px;}
 <div style="
     display:flex;
     align-items:center;
-    gap:10px;
+    gap:8px;
     flex-wrap:wrap;
 ">
 
-    <div style="font-size:30px; line-height:1;">📥</div>
+    <div style="font-size:25px; line-height:1;">📥</div>
 
-    <h2 style="color:#FF0000; margin:0; white-space:nowrap;">Youtube</h2>
+    <h3 style="color:#FF0000; margin:0; white-space:nowrap;">Youtube</h3>
 
     <h2 style="margin:0; white-space:nowrap;">&</h2>
 
-    <h2 class="instagram-text" style="margin:0;
-    ">Instagram</h2>
+    <h3 class="instagram-text" style="margin:0;
+    ">Instagram</h3>
 
     <h2 style="margin:0; white-space:nowrap;">Video Downloader</h2>
 
