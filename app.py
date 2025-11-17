@@ -247,12 +247,12 @@ footer{margin-top:20px;text-align:center;color:var(--muted);font-size:12px;}
 
     <div style="font-size:25px; line-height:1;">📥</div>
 
-    <h3 style="color:#FF0000; margin:0; white-space:nowrap;">Youtube</h3>
+    <h1 style="color:#FF0000; margin:0; white-space:nowrap;">Youtube</h1>
 
     <h2 style="margin:0; white-space:nowrap;">&</h2>
 
-    <h3 class="instagram-text" style="margin:0;
-    ">Instagram</h3>
+    <h1 class="instagram-text" style="margin:0;
+    ">Instagram</h1>
 
     <h2 style="margin:0; white-space:nowrap;">Video Downloader</h2>
 
