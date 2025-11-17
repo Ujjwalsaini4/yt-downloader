@@ -238,7 +238,7 @@ footer{margin-top:20px;text-align:center;color:var(--muted);font-size:12px;}
 </header>
 
 <main class="card">
-  <div">📥 <h2 style="color:#FF0000;">Youtube</h2> <h2> &</h2> <h2 class="instagram-text"> Instagram</h2> <h2> Video Downloader</h2></div>
+  <div class="display: inline;">📥 <h2 style="color:#FF0000;">Youtube</h2> <h2> &</h2> <h2 class="instagram-text"> Instagram</h2> <h2> Video Downloader</h2></div>
   <p class="small">Paste your link, select format, and start. Progress and speed show in real-time.</p>
 
   <div id="preview" class="preview">
