@@ -94,19 +94,25 @@ body{
   padding:clamp(12px,2vw,24px);
 }
 
-.instagram-gradient {
-  /* Fallback for older browsers */
-  background: #d6249f; 
-
-  /* Modern gradient using official colors and stops */
-  background: radial-gradient(circle at 30% 107%, 
-    #fdf497 0%, 
-    #fdf497 5%, 
-    #fd5949 45%, 
-    #d6249f 60%, 
-    #285AEB 90%
-  );
+.instagram-text {
+    /* Define the gradient background using official colors */
+    background: radial-gradient(circle at 30% 107%, #fdf497 0%, #fdf497 5%, #fd5949 45%, #d6249f 60%, #285AEB 90%);
+    
+    /* Clip the background to the shape of the text */
+    -webkit-background-clip: text;
+    background-clip: text;
+    
+    /* Make the text color transparent so the background shows through */
+    -webkit-text-fill-color: transparent;
+    text-fill-color: transparent;
+    
+    /* Optional: Add styling like font size and weight */
+    font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; /* Use a suitable font */
+    font-size: 4rem; /* Adjust size as needed */
+    font-weight: 800; /* Adjust weight as needed */
+    letter-spacing: -1px; /* Adjust spacing as needed */
 }
+
 
 .wrap{max-width:960px;margin:auto;}
 h1,h2{margin:0;font-weight:800;}
@@ -238,7 +244,7 @@ footer{margin-top:20px;text-align:center;color:var(--muted);font-size:12px;}
 </header>
 
 <main class="card">
-  <h2 class="instagram-gradient">📥 Youtube & Instagram Video Downloader</h2>
+  <h2 class="instagram-text">📥 Youtube & Instagram Video Downloader</h2>
   <p class="small">Paste your link, select format, and start. Progress and speed show in real-time.</p>
 
   <div id="preview" class="preview">
