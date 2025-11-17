@@ -105,12 +105,6 @@ body{
     /* Make the text color transparent so the background shows through */
     -webkit-text-fill-color: transparent;
     text-fill-color: transparent;
-    
-    /* Optional: Add styling like font size and weight */
-    font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; /* Use a suitable font */
-    font-size: 4rem; /* Adjust size as needed */
-    font-weight: 800; /* Adjust weight as needed */
-    letter-spacing: -1px; /* Adjust spacing as needed */
 }
 
 
@@ -244,7 +238,7 @@ footer{margin-top:20px;text-align:center;color:var(--muted);font-size:12px;}
 </header>
 
 <main class="card">
-  <h2 class="instagram-text">📥 Youtube & Instagram Video Downloader</h2>
+  <h2>📥 Youtube & <h2 class="instagram-text">Instagram</h2> Video Downloader</h2>
   <p class="small">Paste your link, select format, and start. Progress and speed show in real-time.</p>
 
   <div id="preview" class="preview">
