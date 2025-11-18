@@ -245,7 +245,7 @@ footer{margin-top:20px;text-align:center;color:var(--muted);font-size:12px;}
     flex-wrap:wrap;
 ">
 
-    <div style="font-size:25px; line-height:1;">📥</div>
+ <!--   <div style="font-size:25px; line-height:1;">📥</div>. -->
 
     <h1 style="color:#FF0000; margin:0; white-space:nowrap;">Youtube</h1>
 
