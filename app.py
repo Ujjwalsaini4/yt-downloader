@@ -67,6 +67,7 @@ HTML = """<!doctype html>
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
+<meta name="google-site-verification" content="QYJJCjvAqrNJt6dOIKPbj_8jnL2m_nC52WBsOPgSTpQ" />
 <title>Hyper Downloader</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
