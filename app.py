@@ -748,6 +748,32 @@ def cleanup_worker():
 
 threading.Thread(target=cleanup_worker, daemon=True).start()
 
+// now site map add
+
+@app.get("/sitemap.xml")
+def sitemap():
+    xml = """<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://yt-downloader-s52z.onrender.com/</loc>
+    <priority>1.0</priority>
+    <changefreq>daily</changefreq>
+  </url>
+</urlset>
+"""
+    return xml, 200, {"Content-Type": "application/xml"}
+
+
+@app.get("/robots.txt")
+def robots():
+    txt = """User-agent: *
+Allow: /
+
+Sitemap: https://yt-downloader-s52z.onrender.com/sitemap.xml
+"""
+    return txt, 200, {"Content-Type": "text/plain"}
+// end site map
+
 @app.get("/")
 def home():
     return render_template_string(HTML)
