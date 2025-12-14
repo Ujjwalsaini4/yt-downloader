@@ -70,6 +70,7 @@ HTML = """<!doctype html>
 <meta name="google-site-verification" content="QYJJCjvAqrNJt6dOIKPbj_8jnL2m_nC52WBsOPgSTpQ" />
 <meta name="description" content="Download YouTube and Instagram videos in MP3 or MP4 formats. Fast, safe and free online downloader.">
 <title>YouTube Video Downloader Online | Hyper Downloader</title>
+<link rel="canonical" href="yt-downloader-s52z.onrender.com" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
 <style>
