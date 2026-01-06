@@ -320,7 +320,7 @@ footer{margin-top:20px;text-align:center;color:var(--muted);font-size:12px;}
   </div>
 </main>
 
-<footer>© 2025 Hyper Downloader<a href="https://www.google.com"> —— </a>Auto cleanup & responsive UI</footer>
+<footer>© 2025 Hyper Downloader<a href="https://www.google.com" style="text-decoration: none; colour: #D0D0D0;"> — </a>Auto cleanup & responsive UI</footer>
 </div>
 
 <script>
