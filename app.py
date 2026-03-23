@@ -27,13 +27,13 @@ MAX_CONCURRENT = int(os.environ.get("MAX_CONCURRENT", 3))  # limit concurrent do
 app = Flask(__name__)
 
 # Save cookies if present (from environment)
-cookies_data = os.environ.get("COOKIES_TEXT", "").strip()
-if cookies_data:
-    try:
-        with open("cookies.txt", "w", encoding="utf-8") as f:
-            f.write(cookies_data)
-    except Exception:
-        pass
+#cookies_data = os.environ.get("COOKIES_TEXT", "").strip()
+#if cookies_data:
+#    try:
+#        with open("cookies.txt", "w", encoding="utf-8") as f:
+ #           f.write(cookies_data)
+#   except Exception:
+#        pass
 
 def ffmpeg_path():
     # prefer which, then common paths
@@ -570,16 +570,33 @@ def run_download(job: Job, url: str, fmt_key: str, filename: str = None, video_r
         outtmpl = str(job.tmp.joinpath(outtmpl_base + ".%(ext)s"))
 
         opts = {
-            "format": fmt,
-            "outtmpl": outtmpl,
-            "progress_hooks": [hook],
-            "quiet": not DEBUG_LOG,
-            "no_warnings": True,
-            "noplaylist": True,
-            "retries": 3,
-            "socket_timeout": 30,
-            "cookiefile": "cookies.txt",
+    "format": "best",  # 🔥 stable format
+    "outtmpl": outtmpl,
+    "progress_hooks": [hook],
+    "quiet": True,
+    "no_warnings": True,
+    "noplaylist": True,
+    "retries": 5,
+    "socket_timeout": 30,
+    "force_ipv4": True,
+    "retries": 10,
+    "fragment_retries": 10,
+
+    # 🔥 MAIN FIX (YouTube bypass)
+    "extractor_args": {
+        "youtube": {
+            "player_client": ["android", "web"]
         }
+    },
+
+    # 🔥 browser jaisa behave karega
+    "http_headers": {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+    },
+
+    "geo_bypass": True,
+    "nocheckcertificate": True
+}
 
         if DEBUG_LOG:
             opts["verbose"] = True
@@ -665,7 +682,7 @@ def info():
     d = request.json or {}
     url = d.get("url", "")
     try:
-        with YoutubeDL({"skip_download": True, "quiet": True, "noplaylist": True, "cookiefile": "cookies.txt"}) as y:
+        with YoutubeDL({"skip_download": True, "quiet": True, "noplaylist": True}) as y:
             info = y.extract_info(url, download=False)
         title = info.get("title", "")
         channel = info.get("uploader") or info.get("channel", "")
