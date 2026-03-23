@@ -570,29 +570,30 @@ def run_download(job: Job, url: str, fmt_key: str, filename: str = None, video_r
         outtmpl = str(job.tmp.joinpath(outtmpl_base + ".%(ext)s"))
 
         opts = {
-            "format": "best",
-            "outtmpl": outtmpl,
-            "progress_hooks": [hook],
-            "quiet": True,
-            "no_warnings": True,
-            "noplaylist": True,
-            "retries": 10,
-            "fragment_retries": 10,
-            "socket_timeout": 30,
-            "force_ipv4": True,
+    "format": fmt,
+    "outtmpl": outtmpl,
+    "progress_hooks": [hook],
+    "quiet": True,
+    "no_warnings": True,
+    "noplaylist": True,
+    "retries": 10,
+    "fragment_retries": 10,
+    "socket_timeout": 30,
+    "force_ipv4": True,
 
-            "extractor_args": {
-                "youtube": {
-                    "player_client": ["android", "web", "tv_embedded"]
-                }
-            },
+    "extractor_args": {
+        "youtube": {
+            "player_client": ["android", "web", "tv_embedded"]
+        }
+    },
 
-            "http_headers": {
-                "User-Agent": "Mozilla/5.0"
-            },
+    "http_headers": {
+        "User-Agent": "Mozilla/5.0"
+    },
 
-            "geo_bypass": True,
-            "nocheckcertificate": True
+    "geo_bypass": True,
+    "nocheckcertificate": True,
+    "skip_unavailable_fragments": True
         }
 
         if DEBUG_LOG:
