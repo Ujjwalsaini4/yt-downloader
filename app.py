@@ -569,29 +569,26 @@ def run_download(job: Job, url: str, fmt_key: str, filename: str = None, video_r
         outtmpl_base = f"{prefix_safe}__{safe_base}"
         outtmpl = str(job.tmp.joinpath(outtmpl_base + ".%(ext)s"))
 
-        opts = {
-    "format": "best",  # 🔥 stable format
+     opts = {
+    "format": "best",
     "outtmpl": outtmpl,
     "progress_hooks": [hook],
     "quiet": True,
     "no_warnings": True,
     "noplaylist": True,
-    "retries": 5,
-    "socket_timeout": 30,
-    "force_ipv4": True,
     "retries": 10,
     "fragment_retries": 10,
+    "socket_timeout": 30,
+    "force_ipv4": True,
 
-    # 🔥 MAIN FIX (YouTube bypass)
     "extractor_args": {
         "youtube": {
-            "player_client": ["android", "web"]
+            "player_client": ["android", "web", "tv_embedded"]
         }
     },
 
-    # 🔥 browser jaisa behave karega
     "http_headers": {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+        "User-Agent": "Mozilla/5.0"
     },
 
     "geo_bypass": True,
