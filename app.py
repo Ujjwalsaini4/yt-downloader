@@ -581,12 +581,9 @@ def run_download(job: Job, url: str, fmt_key: str, filename: str = None, video_r
     "socket_timeout": 30,
     "force_ipv4": True,
 
-    "sleep_interval": 2,
-    "max_sleep_interval": 5,
-
     "extractor_args": {
         "youtube": {
-            "player_client": ["android", "web", "tv_embedded"]
+            "player_client": ["android", "web"]
         }
     },
 
@@ -595,8 +592,7 @@ def run_download(job: Job, url: str, fmt_key: str, filename: str = None, video_r
     },
 
     "geo_bypass": True,
-    "nocheckcertificate": True,
-    "skip_unavailable_fragments": True
+    "nocheckcertificate": True
         }
 
         if DEBUG_LOG:
