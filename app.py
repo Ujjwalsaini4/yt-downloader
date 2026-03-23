@@ -576,14 +576,14 @@ def run_download(job: Job, url: str, fmt_key: str, filename: str = None, video_r
     "quiet": True,
     "no_warnings": True,
     "noplaylist": True,
-    "retries": 10,
-    "fragment_retries": 10,
-    "socket_timeout": 30,
+    "retries": 5,
+    "fragment_retries": 5,
+    "socket_timeout": 20,
     "force_ipv4": True,
 
     "extractor_args": {
         "youtube": {
-            "player_client": ["android", "web"]
+            "player_client": ["android"]
         }
     },
 
